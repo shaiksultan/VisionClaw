@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Lab AI Mission Control</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css"><link rel="stylesheet" href="media.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="chat-sidebar" aria-label="Sessions">
+      <div class="brand-bar">
+        <img class="brand-logo brand-logo-etisalat" src="etisalat-logo.svg" alt="etisalat" width="40" height="40">
+        <div class="brand-copy">
+          <strong><span class="brand-etisalat">etisalat</span> UAELAB</strong>
+          <small>Lab AI Mission Control</small>
+        </div>
+      </div>
+      <label class="sidebar-search">
+        <span class="search-icon" aria-hidden="true">⌕</span>
+        <input id="sessionSearch" type="search" placeholder="Search" autocomplete="off">
+      </label>
+      <nav id="nav" class="session-list" aria-label="Agent sessions"></nav>
+      <div class="sidebar-footer">
+        <span class="status-dot"></span>
+        <div>
+          <strong>Agent Status</strong>
+          <small class="agent-status-label">All systems operational</small>
+        </div>
+      </div>
+    </aside>
+
+    <section class="chat-main">
+      <header class="chat-topbar">
+        <div class="chat-topbar-title">
+          <div id="chatAgentMark" class="chat-agent-mark hidden" aria-hidden="true"></div>
+          <div class="chat-identity" aria-hidden="true">
+            <span class="chat-identity-avatar">LM</span>
+          </div>
+          <div class="chat-topbar-copy">
+            <h1 id="chatTitle">AI Glasses</h1>
+            <p class="chat-online-line"><span class="chat-online-dot" aria-hidden="true"></span><span id="chatOnlineLabel">Online Now</span></p>
+            <p id="chatSubtitle" class="chat-subtitle">Know, See and Act through Lab AI Mission Control</p>
+          </div>
+        </div>
+        <div class="chat-topbar-actions">
+          <button class="ghost-btn" type="button" id="openLogs">Replay</button>
+          <button class="ghost-btn" type="button" id="openEvidence">Evidence</button>
+        </div>
+      </header>
+      <main id="main" class="chat-workspace"></main>
+      <footer class="chat-composer">
+        <form id="composerForm" class="composer-form" autocomplete="off">
+          <input id="composerInput" type="text" placeholder="Reply to Lab Manager…" aria-label="Message">
+          <button type="submit" class="composer-send" aria-label="Send">↑</button>
+        </form>
+        <p class="composer-brand">etisalat <strong>UAELAB</strong> Mission Control</p>
+      </footer>
+    </section>
+  </div>
+
+  <div id="toast" class="toast"></div>
+  <div id="incomingCall" class="incoming-call hidden" aria-live="assertive">
+    <div class="incoming-call-card">
+      <div class="incoming-bots" aria-hidden="true">
+        <div class="bot-orbit">
+          <span class="openai-dot d1"></span>
+          <span class="openai-dot d2"></span>
+          <span class="openai-dot d3"></span>
+          <span class="openai-dot d4"></span>
+          <span class="openai-dot d5"></span>
+          <span class="openai-dot d6"></span>
+          <span class="openai-dot d7"></span>
+          <span class="openai-dot d8"></span>
+        </div>
+        <div class="grok-bot bot-a">
+          <span class="bot-eye left"></span>
+          <span class="bot-eye right"></span>
+          <span class="bot-mouth"></span>
+        </div>
+        <div class="grok-bot bot-b">
+          <span class="bot-eye left"></span>
+          <span class="bot-eye right"></span>
+          <span class="bot-mouth smile"></span>
+        </div>
+        <div class="grok-bot bot-c">
+          <span class="bot-eye left"></span>
+          <span class="bot-eye right"></span>
+          <span class="bot-mouth"></span>
+        </div>
+        <div class="call-ripple r1"></div>
+        <div class="call-ripple r2"></div>
+        <div class="call-ripple r3"></div>
+      </div>
+      <p class="incoming-eyebrow">Incoming Expert Engineer</p>
+      <h2 id="incomingCallTitle">Expert Engineer request</h2>
+      <p class="muted" id="incomingCallDesc">New request from AI glasses</p>
+      <div class="incoming-actions">
+        <button type="button" class="primary answer-glow" id="answerIncomingCall">Answer call</button>
+        <button type="button" class="secondary" id="dismissIncomingCall">Dismiss</button>
+      </div>
+    </div>
+  </div>
+  <div id="modalRoot" class="modal-root hidden" aria-hidden="true">
+    <div class="modal-backdrop" data-close-modal></div>
+    <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <div class="modal-head"><h2 id="modalTitle">Modal</h2><button type="button" class="icon modal-close" data-close-modal aria-label="Close">✕</button></div>
+      <div id="modalBody" class="modal-body"></div>
+    </div>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>

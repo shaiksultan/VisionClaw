@@ -28,6 +28,7 @@ fun ControlsRow(
     isAIActive: Boolean,
     onToggleLive: () -> Unit,
     isLiveActive: Boolean,
+    isSupportMode: Boolean = true,
     modifier: Modifier = Modifier,
 ) {
     Row(
@@ -66,7 +67,7 @@ fun ControlsRow(
             )
         }
 
-        // Live toggle button
+        // Live / remote support toggle button
         Button(
             onClick = onToggleLive,
             modifier = Modifier.aspectRatio(1f),
@@ -78,7 +79,12 @@ fun ControlsRow(
         ) {
             Icon(
                 imageVector = Icons.Default.Videocam,
-                contentDescription = if (isLiveActive) "Stop Live" else "Start Live",
+                contentDescription = when {
+                    isLiveActive && isSupportMode -> "End Support"
+                    isLiveActive -> "Stop Live"
+                    isSupportMode -> "Start Support"
+                    else -> "Start Support"
+                },
                 tint = Color.White,
             )
         }

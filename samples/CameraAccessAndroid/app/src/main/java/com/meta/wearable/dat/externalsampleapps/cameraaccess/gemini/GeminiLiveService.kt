@@ -194,6 +194,8 @@ class GeminiLiveService {
                             put("text", text)
                         }))
                     }))
+                    // Required so Gemini completes the turn and can answer immediately.
+                    put("turnComplete", true)
                 })
             }
             webSocket?.send(json.toString())

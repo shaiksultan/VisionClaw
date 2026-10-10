@@ -30,6 +30,8 @@ sealed class WebRTCConnectionState {
 
 data class WebRTCUiState(
     val isActive: Boolean = false,
+    val isSupportMode: Boolean = false,
+    val supportCallCode: String = "",
     val connectionState: WebRTCConnectionState = WebRTCConnectionState.Disconnected,
     val roomCode: String = "",
     val isMuted: Boolean = false,
@@ -38,6 +40,10 @@ data class WebRTCUiState(
     val hasRemoteVideo: Boolean = false,
 )
 
+/**
+ * Streamer-side WebRTC session.
+ * Keep offer / ICE handling simple — aggressive renegotiation was breaking Expert Engineer calls.
+ */
 class WebRTCSessionViewModel(application: Application) : AndroidViewModel(application) {
     companion object {
         private const val TAG = "WebRTCSessionVM"
@@ -49,10 +55,27 @@ class WebRTCSessionViewModel(application: Application) : AndroidViewModel(applic
     private var webRTCClient: WebRTCClient? = null
     private var signalingClient: SignalingClient? = null
     private var savedRoomCode: String? = null
+    private var reconnectAttempt = 0
+    private var reconnectJob: kotlinx.coroutines.Job? = null
+    private var signalingGeneration = 0
+    private var sessionGeneration = 0
+    var onRoomCreated: ((String) -> Unit)? = null
+    /** Fired when the remote expert leaves while a support session is still active. */
+    var onSupportPeerLeft: (() -> Unit)? = null
+
+    fun getEglBase() = webRTCClient?.eglBase
+
+    fun startSupportSession(supportCallCode: String) {
+        if (_uiState.value.isActive) {
+            Log.d(TAG, "Restarting support session for $supportCallCode")
+            stopSession()
+        }
+        _uiState.value = _uiState.value.copy(isSupportMode = true, supportCallCode = supportCallCode)
+        startSession()
+    }
 
     private val lifecycleObserver = object : DefaultLifecycleObserver {
         override fun onStart(owner: LifecycleOwner) {
-            // App came to foreground
             handleReturnToForeground()
         }
     }
@@ -67,28 +90,52 @@ class WebRTCSessionViewModel(application: Application) : AndroidViewModel(applic
             return
         }
 
+        reconnectAttempt = 0
+        reconnectJob?.cancel()
+        val generation = ++sessionGeneration
         _uiState.value = _uiState.value.copy(
             isActive = true,
             connectionState = WebRTCConnectionState.Connecting,
+            errorMessage = null,
         )
         savedRoomCode = null
 
         viewModelScope.launch {
             val iceServers = WebRTCConfig.fetchIceServers()
+            // User may have ended the call while ICE servers were loading.
+            if (generation != sessionGeneration || !_uiState.value.isActive) {
+                Log.d(TAG, "Start aborted — session already stopped")
+                return@launch
+            }
             setupWebRTCClient(iceServers)
+            if (generation != sessionGeneration || !_uiState.value.isActive) {
+                webRTCClient?.close()
+                webRTCClient = null
+                Log.d(TAG, "Start aborted after peer setup — session already stopped")
+                return@launch
+            }
             connectSignaling(rejoinCode = null)
             observeForeground()
         }
     }
 
     fun stopSession() {
+        Log.d(TAG, "stopSession")
+        reconnectJob?.cancel()
+        reconnectJob = null
         removeForegroundObserver()
-        webRTCClient?.close()
-        webRTCClient = null
-        signalingClient?.disconnect()
-        signalingClient = null
-        savedRoomCode = null
+        sessionGeneration += 1
+        signalingGeneration += 1
+        // Clear UI first so overlays disappear even if teardown is slow.
         _uiState.value = WebRTCUiState()
+        savedRoomCode = null
+        reconnectAttempt = 0
+        val client = webRTCClient
+        webRTCClient = null
+        val signaling = signalingClient
+        signalingClient = null
+        runCatching { client?.close() }
+        runCatching { signaling?.disconnect(notify = false) }
     }
 
     fun toggleMute() {
@@ -108,15 +155,18 @@ class WebRTCSessionViewModel(application: Application) : AndroidViewModel(applic
 
     fun pushVideoFrame(bitmap: Bitmap) {
         if (!_uiState.value.isActive) return
-        if (_uiState.value.connectionState != WebRTCConnectionState.Connected) return
-        webRTCClient?.pushVideoFrame(bitmap)
+        // Push while waiting too so frames are ready as soon as ICE connects.
+        when (_uiState.value.connectionState) {
+            is WebRTCConnectionState.WaitingForPeer,
+            is WebRTCConnectionState.Connected,
+            is WebRTCConnectionState.Connecting -> webRTCClient?.pushVideoFrame(bitmap)
+            else -> Unit
+        }
     }
 
     fun clearError() {
         _uiState.value = _uiState.value.copy(errorMessage = null)
     }
-
-    // -- Private --
 
     private fun setupWebRTCClient(iceServers: List<PeerConnection.IceServer>) {
         webRTCClient?.close()
@@ -152,13 +202,16 @@ class WebRTCSessionViewModel(application: Application) : AndroidViewModel(applic
     }
 
     private fun connectSignaling(rejoinCode: String?) {
-        signalingClient?.disconnect()
+        signalingClient?.disconnect(notify = false)
+        val generation = ++signalingGeneration
 
         val signaling = SignalingClient()
         signalingClient = signaling
 
         signaling.onConnected = {
             viewModelScope.launch {
+                if (generation != signalingGeneration || !_uiState.value.isActive) return@launch
+                reconnectAttempt = 0
                 if (rejoinCode != null) {
                     Log.d(TAG, "Reconnected, rejoining room: $rejoinCode")
                     signalingClient?.rejoinRoom(rejoinCode)
@@ -169,27 +222,40 @@ class WebRTCSessionViewModel(application: Application) : AndroidViewModel(applic
         }
 
         signaling.onMessageReceived = { message ->
-            viewModelScope.launch { handleSignalingMessage(message) }
+            viewModelScope.launch {
+                if (generation != signalingGeneration) return@launch
+                handleSignalingMessage(message)
+            }
         }
 
         signaling.onDisconnected = { reason ->
             viewModelScope.launch {
-                if (!_uiState.value.isActive) return@launch
-                if (savedRoomCode != null) {
-                    _uiState.value = _uiState.value.copy(
-                        connectionState = WebRTCConnectionState.Backgrounded
-                    )
-                    Log.d(TAG, "Signaling disconnected (backgrounded), will rejoin: $reason")
-                } else {
-                    stopSession()
-                    _uiState.value = _uiState.value.copy(
-                        errorMessage = "Signaling disconnected: ${reason ?: "Unknown"}"
-                    )
-                }
+                if (generation != signalingGeneration || !_uiState.value.isActive) return@launch
+                Log.w(TAG, "Signaling disconnected, scheduling reconnect: $reason")
+                _uiState.value = _uiState.value.copy(
+                    connectionState = WebRTCConnectionState.Backgrounded,
+                    errorMessage = null,
+                )
+                scheduleReconnect()
             }
         }
 
         signaling.connect(WebRTCConfig.signalingServerURL)
+    }
+
+    private fun scheduleReconnect() {
+        if (!_uiState.value.isActive) return
+        reconnectJob?.cancel()
+        val delayMs = (1000L * (1 shl reconnectAttempt.coerceAtMost(4))).coerceAtMost(15_000L)
+        reconnectAttempt += 1
+        reconnectJob = viewModelScope.launch {
+            kotlinx.coroutines.delay(delayMs)
+            if (!_uiState.value.isActive) return@launch
+            val code = savedRoomCode
+            Log.d(TAG, "Reconnecting signaling (attempt $reconnectAttempt), room=$code")
+            _uiState.value = _uiState.value.copy(connectionState = WebRTCConnectionState.Connecting)
+            connectSignaling(rejoinCode = code)
+        }
     }
 
     private fun handleSignalingMessage(message: SignalingMessage) {
@@ -198,22 +264,28 @@ class WebRTCSessionViewModel(application: Application) : AndroidViewModel(applic
                 _uiState.value = _uiState.value.copy(
                     roomCode = message.room,
                     connectionState = WebRTCConnectionState.WaitingForPeer,
+                    errorMessage = null,
                 )
                 savedRoomCode = message.room
+                onRoomCreated?.invoke(message.room)
                 Log.d(TAG, "Room created: ${message.room}")
             }
             is SignalingMessage.RoomRejoined -> {
                 _uiState.value = _uiState.value.copy(
                     roomCode = message.room,
                     connectionState = WebRTCConnectionState.WaitingForPeer,
+                    errorMessage = null,
                 )
                 savedRoomCode = message.room
+                onRoomCreated?.invoke(message.room)
                 Log.d(TAG, "Room rejoined: ${message.room}")
             }
             is SignalingMessage.PeerJoined -> {
+                // Simple path that used to work: offer on the existing peer connection.
                 Log.d(TAG, "Peer joined, creating offer")
                 webRTCClient?.createOffer { sdp ->
                     signalingClient?.sendSdp(sdp)
+                    Log.d(TAG, "Offer sent")
                 }
             }
             is SignalingMessage.Answer -> {
@@ -227,24 +299,35 @@ class WebRTCSessionViewModel(application: Application) : AndroidViewModel(applic
                 }
             }
             is SignalingMessage.PeerLeft -> {
-                Log.d(TAG, "Peer left")
-                _uiState.value = _uiState.value.copy(
-                    connectionState = WebRTCConnectionState.WaitingForPeer,
-                )
+                Log.d(TAG, "Peer left support=${_uiState.value.isSupportMode}")
+                if (_uiState.value.isSupportMode && _uiState.value.isActive) {
+                    // Expert hung up / closed viewer — end cleanly instead of sticky "Waiting…".
+                    val callback = onSupportPeerLeft
+                    stopSession()
+                    callback?.invoke()
+                } else {
+                    _uiState.value = _uiState.value.copy(
+                        connectionState = WebRTCConnectionState.WaitingForPeer,
+                        remoteVideoTrack = null,
+                        hasRemoteVideo = false,
+                    )
+                }
             }
             is SignalingMessage.Error -> {
-                // If rejoin fails (room expired), create a new room
-                if (savedRoomCode != null && message.message == "Room not found") {
-                    Log.d(TAG, "Rejoin failed (room expired), creating new room")
+                if (message.message.equals("Room not found", ignoreCase = true)) {
+                    Log.d(TAG, "Room expired/not found — creating a new room")
                     savedRoomCode = null
                     signalingClient?.createRoom()
+                    _uiState.value = _uiState.value.copy(
+                        connectionState = WebRTCConnectionState.Connecting,
+                        errorMessage = null,
+                    )
                 } else {
+                    Log.w(TAG, "Signaling error: ${message.message}")
                     _uiState.value = _uiState.value.copy(errorMessage = message.message)
                 }
             }
-            is SignalingMessage.RoomJoined, is SignalingMessage.Offer -> {
-                // Not handled by streamer side
-            }
+            is SignalingMessage.RoomJoined, is SignalingMessage.Offer -> Unit
         }
     }
 
@@ -253,24 +336,32 @@ class WebRTCSessionViewModel(application: Application) : AndroidViewModel(applic
             PeerConnection.IceConnectionState.CONNECTED,
             PeerConnection.IceConnectionState.COMPLETED -> {
                 _uiState.value = _uiState.value.copy(
-                    connectionState = WebRTCConnectionState.Connected
+                    connectionState = WebRTCConnectionState.Connected,
+                    errorMessage = null,
                 )
                 Log.d(TAG, "Peer connected")
             }
             PeerConnection.IceConnectionState.DISCONNECTED -> {
+                // Transient — do not tear down / renegotiate (that caused black screen regressions).
                 _uiState.value = _uiState.value.copy(
                     connectionState = WebRTCConnectionState.WaitingForPeer
                 )
             }
             PeerConnection.IceConnectionState.FAILED -> {
+                Log.w(TAG, "ICE failed")
                 _uiState.value = _uiState.value.copy(
-                    connectionState = WebRTCConnectionState.Error("Connection failed")
+                    connectionState = WebRTCConnectionState.WaitingForPeer,
+                    remoteVideoTrack = null,
+                    hasRemoteVideo = false,
+                    errorMessage = null,
                 )
             }
             PeerConnection.IceConnectionState.CLOSED -> {
-                _uiState.value = _uiState.value.copy(
-                    connectionState = WebRTCConnectionState.Disconnected
-                )
+                if (_uiState.value.isActive) {
+                    _uiState.value = _uiState.value.copy(
+                        connectionState = WebRTCConnectionState.WaitingForPeer
+                    )
+                }
             }
             else -> {}
         }
@@ -285,9 +376,11 @@ class WebRTCSessionViewModel(application: Application) : AndroidViewModel(applic
             connectionState = WebRTCConnectionState.Connecting,
             remoteVideoTrack = null,
             hasRemoteVideo = false,
+            errorMessage = null,
         )
 
         webRTCClient?.close()
+        reconnectJob?.cancel()
 
         viewModelScope.launch {
             val iceServers = WebRTCConfig.fetchIceServers()

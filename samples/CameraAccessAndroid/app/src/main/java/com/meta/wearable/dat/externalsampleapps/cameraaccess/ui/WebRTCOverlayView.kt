@@ -47,9 +47,9 @@ fun WebRTCOverlay(
         // Status pill
         StatusPill(
             label = when (uiState.connectionState) {
-                is WebRTCConnectionState.Connected -> "Live"
+                is WebRTCConnectionState.Connected -> if (uiState.isSupportMode) "Support Live" else "Live"
                 is WebRTCConnectionState.Connecting -> "Connecting..."
-                is WebRTCConnectionState.WaitingForPeer -> "Waiting..."
+                is WebRTCConnectionState.WaitingForPeer -> if (uiState.isSupportMode) "Waiting for expert engineer" else "Waiting..."
                 is WebRTCConnectionState.Backgrounded -> "Paused"
                 is WebRTCConnectionState.Error -> "Error"
                 is WebRTCConnectionState.Disconnected -> "Off"
@@ -67,6 +67,13 @@ fun WebRTCOverlay(
         // Room code pill (tap to copy)
         if (uiState.roomCode.isNotEmpty()) {
             RoomCodePill(code = uiState.roomCode)
+        }
+
+        if (uiState.isSupportMode && uiState.supportCallCode.isNotEmpty()) {
+            StatusPill(
+                label = uiState.supportCallCode,
+                color = Color(0xFF2196F3),
+            )
         }
 
         // Mic status

@@ -43,6 +43,7 @@ fun SettingsScreen(
     modifier: Modifier = Modifier,
 ) {
     var geminiAPIKey by remember { mutableStateOf(SettingsManager.geminiAPIKey) }
+    var peopleDirectoryURL by remember { mutableStateOf(SettingsManager.peopleDirectoryURL) }
     var systemPrompt by remember { mutableStateOf(SettingsManager.geminiSystemPrompt) }
     var openClawHost by remember { mutableStateOf(SettingsManager.openClawHost) }
     var openClawPort by remember { mutableStateOf(SettingsManager.openClawPort.toString()) }
@@ -55,6 +56,7 @@ fun SettingsScreen(
 
     fun save() {
         SettingsManager.geminiAPIKey = geminiAPIKey.trim()
+        SettingsManager.peopleDirectoryURL = peopleDirectoryURL.trim()
         SettingsManager.geminiSystemPrompt = systemPrompt.trim()
         SettingsManager.openClawHost = openClawHost.trim()
         openClawPort.trim().toIntOrNull()?.let { SettingsManager.openClawPort = it }
@@ -67,6 +69,7 @@ fun SettingsScreen(
 
     fun reload() {
         geminiAPIKey = SettingsManager.geminiAPIKey
+        peopleDirectoryURL = SettingsManager.peopleDirectoryURL
         systemPrompt = SettingsManager.geminiSystemPrompt
         openClawHost = SettingsManager.openClawHost
         openClawPort = SettingsManager.openClawPort.toString()
@@ -105,6 +108,20 @@ fun SettingsScreen(
                 onValueChange = { geminiAPIKey = it },
                 label = "API Key",
                 placeholder = "Enter Gemini API key",
+            )
+
+            SectionHeader("LAB VISION Demo Hub")
+            MonoTextField(
+                value = peopleDirectoryURL,
+                onValueChange = { peopleDirectoryURL = it },
+                label = "Node API URL",
+                placeholder = "http://192.168.1.10:8090",
+                keyboardType = KeyboardType.Uri,
+            )
+            Text(
+                text = "Backend for inventory, knowledge, troubleshooting, lab tests, and staff directory.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
             SectionHeader("System Prompt")

@@ -1,0 +1,15 @@
+data/
+node_modules/
+frontend/node_modules/
+frontend/dist/
+backend/.venv/
+backend/__pycache__/
+reports/
+*.db
+*.sqlite
+.env
+.env.*
+*.log
+*.pptx
+__pycache__/
+.pytest_cache/

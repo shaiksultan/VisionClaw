@@ -1,0 +1,815 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>ab-twin Viewer</title>
+  <style>
+    :root{--bg:#070b0a;--panel:rgba(12,18,16,.94);--line:#2a3330;--text:#f3f6f4;--muted:#8a9691;--accent:#4ade80}
+    *{box-sizing:border-box}
+    html,body{height:100%;margin:0;overflow:hidden;background:var(--bg);color:var(--text);font:13px/1.4 "Segoe UI",system-ui,sans-serif}
+    header{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 14px;border-bottom:1px solid var(--line);background:#101614;position:relative;z-index:6}
+    h1{margin:0;font-size:16px}h1 span{color:var(--accent)}.muted{color:var(--muted)}
+    .chip{padding:3px 9px;border-radius:999px;border:1px solid #2f6b4a;color:var(--accent);background:#15201c;font-size:11px}
+    #layout{display:grid;grid-template-columns:1fr 320px;height:calc(100vh - 49px)}
+    #stage{position:relative;background:#050807;overflow:hidden;touch-action:none;cursor:grab}
+    #stage.dragging,#stage.looking{cursor:grabbing}
+    #stage.locked{cursor:none}
+    #viewport{position:absolute;inset:0;display:grid;place-items:center;transform-origin:center center;z-index:1}
+    #canvas3d{position:absolute;inset:0;width:100%;height:100%;display:none;z-index:1;outline:none}
+    #canvas3d.on{display:block}
+    #video,#still{width:100%;height:100%;object-fit:contain;background:#050807;display:none}
+    #video.on,#still.on{display:block}
+    #overlays{position:absolute;inset:0;pointer-events:none;z-index:3}
+    .ov{position:absolute;min-width:120px;max-width:200px;padding:10px 12px;border-radius:12px;border:1px solid rgba(255,255,255,.14);background:rgba(10,16,14,.86);backdrop-filter:blur(8px);box-shadow:0 10px 30px rgba(0,0,0,.35);opacity:0;transform:translateY(6px) scale(.98);transition:opacity .2s ease,transform .2s ease}
+    .ov.show{opacity:1;transform:translateY(0) scale(1)}
+    .ov .t{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
+    .ov .v{font-size:22px;font-weight:700}
+    .ov .u{font-size:12px;color:var(--muted);margin-left:4px}
+    .gauge-ring{width:64px;height:64px;border-radius:50%;margin:6px auto 4px;display:grid;place-items:center;background:conic-gradient(var(--c) calc(var(--p)*1%), rgba(255,255,255,.08) 0);position:relative}
+    .gauge-ring::after{content:"";position:absolute;inset:7px;border-radius:50%;background:rgba(10,16,14,.92)}
+    .gauge-ring span{position:relative;z-index:1;font-weight:700;font-size:13px}
+    .status-row{display:flex;align-items:center;gap:10px;margin-top:4px}
+    .status-dot{width:18px;height:18px;border-radius:50%;box-shadow:0 0 12px currentColor;flex:0 0 auto}
+    .status-dot.green{background:#22c55e;color:#22c55e}
+    .status-dot.red{background:#ef4444;color:#ef4444}
+    .status-dot.gray{background:#6b7280;color:#6b7280}
+    #hint{position:absolute;left:50%;top:12px;transform:translateX(-50%);z-index:4;background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:6px 12px;color:var(--muted);font-size:12px;pointer-events:none;white-space:nowrap}
+    #hud{position:absolute;left:12px;bottom:12px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 12px;max-width:min(420px,78%);z-index:4}
+    #hud strong{display:block;margin-bottom:2px}#hud p{margin:0;color:var(--muted);font-size:12px}
+    #side{border-left:1px solid var(--line);background:#0e1512;padding:12px;overflow:auto;display:flex;flex-direction:column;gap:12px}
+    #side h2{margin:0;font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--accent)}
+    .card{background:#121a17;border:1px solid var(--line);border-radius:12px;padding:10px;display:grid;gap:8px}
+    label{display:grid;gap:4px;color:var(--muted);font-size:11px}
+    input,select{width:100%;background:#0a100e;border:1px solid var(--line);border-radius:8px;color:var(--text);padding:8px 9px;font:inherit}
+    .btns{display:flex;flex-wrap:wrap;gap:6px}
+    button{appearance:none;border:1px solid var(--line);background:#18241f;color:var(--text);border-radius:8px;padding:8px 10px;font:600 12px/1 "Segoe UI",system-ui,sans-serif;cursor:pointer}
+    button.primary{background:#1d3a2d;border-color:#2f6b4a;color:var(--accent)}
+    button.danger{border-color:#7f1d1d;color:#fca5a5}
+    button.active{background:#1d3a2d;border-color:#2f6b4a;color:var(--accent)}
+    .list{display:grid;gap:6px;max-height:220px;overflow:auto}
+    .item{display:flex;justify-content:space-between;gap:8px;align-items:center;padding:8px;border-radius:8px;border:1px solid var(--line);background:#0a100e}
+    .item small{color:var(--muted)}
+    #walkBar{display:flex;align-items:center;gap:8px}
+    #pos{min-width:42px;text-align:right;color:var(--muted)}
+    .field-indicator{display:none}.show-indicator .field-indicator{display:grid}.show-indicator .field-static{display:none}
+    .mode-row{display:grid;grid-template-columns:1fr 1fr;gap:6px}
+    @media(max-width:900px){#layout{grid-template-columns:1fr}#side{display:none}}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>ab-twin <span>Digital Twin</span></h1>
+    <div style="display:flex;gap:8px;align-items:center">
+      <span class="chip" id="modeChip">3D explore</span>
+      <span class="muted" id="meta">Loading…</span>
+    </div>
+  </header>
+  <div id="layout">
+    <div id="stage">
+      <canvas id="canvas3d" tabindex="0"></canvas>
+      <div id="viewport">
+        <video id="video" playsinline preload="auto"></video>
+        <img id="still" alt="Twin frame">
+      </div>
+      <div id="overlays"></div>
+      <div id="hint">Click canvas · drag look · WASD move · Auto-play walks the path</div>
+      <div id="hud">
+        <strong id="title">Twin</strong>
+        <p id="note">Loading…</p>
+      </div>
+    </div>
+    <aside id="side">
+      <h2>View mode</h2>
+      <div class="card">
+        <div class="mode-row">
+          <button class="primary active" type="button" id="mode3dBtn">3D explore</button>
+          <button type="button" id="modeVideoBtn">Walk video</button>
+        </div>
+        <p class="muted" id="modeHint">Continuous panoramic twin (stitched walkthrough). Photoreal 3DGS needs a CUDA GPU.</p>
+      </div>
+
+      <h2>Walk control</h2>
+      <div class="card">
+        <div class="btns">
+          <button class="primary" type="button" id="autoPlayBtn">Auto-play</button>
+          <button type="button" id="backBtn">◀ Step</button>
+          <button type="button" id="fwdBtn">Step ▶</button>
+        </div>
+        <div id="walkBar">
+          <input id="scrub" type="range" min="0" max="1000" value="0" step="1" style="flex:1;accent-color:var(--accent)">
+          <span id="pos">0%</span>
+        </div>
+        <label>Walk speed
+          <select id="speed">
+            <option value="0.75">Relaxed</option>
+            <option value="1.25" selected>Normal</option>
+            <option value="1.75">Brisk</option>
+            <option value="2.5">Fast</option>
+          </select>
+        </label>
+      </div>
+
+      <h2>Add overlay</h2>
+      <div class="card" id="ovForm">
+        <label>Type
+          <select id="ovType">
+            <option value="indicator">Status indicator (API)</option>
+            <option value="gauge">Gauge</option>
+            <option value="metric">Metric</option>
+            <option value="label">Label</option>
+          </select>
+        </label>
+        <label>Title <input id="ovTitle" placeholder="MME link"></label>
+        <label class="field-indicator">API URL <input id="ovApi" placeholder="https://…/health or /api/…"></label>
+        <label class="field-static">Value <input id="ovValue" placeholder="42"></label>
+        <label class="field-static">Unit <input id="ovUnit" placeholder="°C"></label>
+        <div class="btns field-static">
+          <label style="flex:1">Min <input id="ovMin" type="number" value="0"></label>
+          <label style="flex:1">Max <input id="ovMax" type="number" value="100"></label>
+        </div>
+        <label class="field-static">Color <input id="ovColor" type="color" value="#4ade80"></label>
+        <div class="btns">
+          <button class="primary" type="button" id="addOverlay">Add at current view</button>
+          <button type="button" id="saveOverlays">Save</button>
+        </div>
+        <p class="muted" id="ovHint">Status indicators call the API and show green/red.</p>
+      </div>
+
+      <h2>Overlays</h2>
+      <div class="card"><div class="list" id="ovList"></div></div>
+    </aside>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+  <script>
+    const twinId = new URLSearchParams(location.search).get('id');
+    const metaEl = document.getElementById('meta');
+    const titleEl = document.getElementById('title');
+    const noteEl = document.getElementById('note');
+    const stage = document.getElementById('stage');
+    const viewport = document.getElementById('viewport');
+    const canvas3d = document.getElementById('canvas3d');
+    const video = document.getElementById('video');
+    const still = document.getElementById('still');
+    const overlaysEl = document.getElementById('overlays');
+    const scrub = document.getElementById('scrub');
+    const posEl = document.getElementById('pos');
+    const speedEl = document.getElementById('speed');
+    const ovList = document.getElementById('ovList');
+    const ovForm = document.getElementById('ovForm');
+    const ovType = document.getElementById('ovType');
+    const autoPlayBtn = document.getElementById('autoPlayBtn');
+    const modeChip = document.getElementById('modeChip');
+    const modeHint = document.getElementById('modeHint');
+    const mode3dBtn = document.getElementById('mode3dBtn');
+    const modeVideoBtn = document.getElementById('modeVideoBtn');
+    const hintEl = document.getElementById('hint');
+
+    if (!twinId) throw new Error('Missing ?id=TWIN-…');
+
+    let overlays = [];
+    let frames = [];
+    let mode = '3d'; // 3d | video | frames
+    let frameIndex = 0;
+    let panX = 0, panY = 0;
+    let dragging = false, lastX = 0, lastY = 0;
+    let cruise = false;
+    let autoPlay = false;
+    let keys = {};
+    const liveCache = {};
+    let twinMeta = null;
+    let pathProgress = 0;
+
+    // --- Three.js state ---
+    let renderer, scene, camera, panoramaMesh, clock;
+    let yaw = 0, pitch = 0;
+    let lookDragging = false;
+    let cloudCenter = new THREE.Vector3(0, 1.15, 0);
+    let pathRadius = 0.15;
+    let eyeHeight = 1.15;
+    let threeReady = false;
+    let panoramaReady = false;
+
+    function syncTypeFields() {
+      const ind = ovType.value === 'indicator';
+      ovForm.classList.toggle('show-indicator', ind);
+      document.getElementById('ovHint').textContent = ind
+        ? 'API is checked live. Green = healthy, Red = down/error.'
+        : 'Pinned to this walk position and shown when you arrive.';
+    }
+    ovType.onchange = syncTypeFields;
+    syncTypeFields();
+
+    function setCameraOnPath(t, lockLook = true) {
+      // Inside continuous panoramic cylinder — progress rotates the view around the lab
+      const angle = t * Math.PI * 2;
+      camera.position.set(
+        cloudCenter.x + Math.cos(angle) * pathRadius,
+        eyeHeight,
+        cloudCenter.z + Math.sin(angle) * pathRadius,
+      );
+      if (lockLook || autoPlay || cruise) {
+        yaw = angle + Math.PI;
+        pitch = 0;
+      }
+      applyLook();
+    }
+
+    function applyLook() {
+      pitch = Math.max(-1.15, Math.min(1.15, pitch));
+      const q = new THREE.Quaternion();
+      q.setFromEuler(new THREE.Euler(pitch, yaw, 0, 'YXZ'));
+      camera.quaternion.copy(q);
+    }
+
+    function initThree() {
+      if (threeReady) return;
+      renderer = new THREE.WebGLRenderer({ canvas: canvas3d, antialias: true, alpha: false });
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+      renderer.setSize(stage.clientWidth, stage.clientHeight, false);
+      renderer.setClearColor(0x050807, 1);
+      scene = new THREE.Scene();
+      camera = new THREE.PerspectiveCamera(78, stage.clientWidth / Math.max(stage.clientHeight, 1), 0.05, 80);
+      clock = new THREE.Clock();
+      scene.add(new THREE.AmbientLight(0xffffff, 1));
+      const floor = new THREE.Mesh(
+        new THREE.CircleGeometry(4.2, 48),
+        new THREE.MeshBasicMaterial({ color: 0x0a100e }),
+      );
+      floor.rotation.x = -Math.PI / 2;
+      floor.position.y = 0.02;
+      scene.add(floor);
+      threeReady = true;
+      window.addEventListener('resize', onResize3d);
+    }
+
+    function onResize3d() {
+      if (!threeReady) return;
+      const w = stage.clientWidth, h = stage.clientHeight;
+      camera.aspect = w / Math.max(h, 1);
+      camera.updateProjectionMatrix();
+      renderer.setSize(w, h, false);
+    }
+
+    function loadTexture(url) {
+      return new Promise((resolve, reject) => {
+        const loader = new THREE.TextureLoader();
+        loader.setCrossOrigin('anonymous');
+        loader.load(
+          url,
+          tex => {
+            if (THREE.SRGBColorSpace) tex.colorSpace = THREE.SRGBColorSpace;
+            tex.wrapS = THREE.RepeatWrapping;
+            tex.wrapT = THREE.ClampToEdgeWrapping;
+            tex.minFilter = THREE.LinearFilter;
+            tex.magFilter = THREE.LinearFilter;
+            tex.generateMipmaps = false;
+            resolve(tex);
+          },
+          undefined,
+          reject,
+        );
+      });
+    }
+
+    async function loadPanoramaScene(url) {
+      initThree();
+      const tex = await loadTexture(url);
+      const radius = 3.2;
+      const height = 2.35;
+      const geo = new THREE.CylinderGeometry(radius, radius, height, 96, 1, true);
+      // Flip so texture is viewed from inside
+      geo.scale(-1, 1, 1);
+      const mat = new THREE.MeshBasicMaterial({
+        map: tex,
+        side: THREE.FrontSide,
+        toneMapped: false,
+      });
+      if (panoramaMesh) {
+        scene.remove(panoramaMesh);
+        panoramaMesh.geometry.dispose();
+        panoramaMesh.material.map?.dispose?.();
+        panoramaMesh.material.dispose();
+      }
+      panoramaMesh = new THREE.Mesh(geo, mat);
+      panoramaMesh.position.copy(cloudCenter);
+      panoramaMesh.position.y = eyeHeight;
+      scene.add(panoramaMesh);
+      panoramaReady = true;
+      pathProgress = 0;
+      setCameraOnPath(0, true);
+      return true;
+    }
+
+    async function loadFallbackPhotoCylinder(frameList) {
+      // If panorama export missing, stitch client-side into one canvas then wrap cylinder
+      initThree();
+      const usable = frameList.filter(f => f?.url).slice(0, 48);
+      if (usable.length < 2) throw new Error('Need frames for 3D twin');
+      const tileW = 320, tileH = 180;
+      const canvas = document.createElement('canvas');
+      canvas.width = tileW * usable.length;
+      canvas.height = tileH;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#0a100e';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      await Promise.all(usable.map((frame, i) => new Promise((resolve) => {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = () => {
+          const scale = Math.min(tileW / img.width, tileH / img.height);
+          const dw = img.width * scale, dh = img.height * scale;
+          ctx.drawImage(img, i * tileW + (tileW - dw) / 2, (tileH - dh) / 2, dw, dh);
+          // Soft blend seam into next tile
+          if (i > 0) {
+            const g = ctx.createLinearGradient(i * tileW - 18, 0, i * tileW + 18, 0);
+            // redraw overlap edge softly by reducing alpha strip (approximate)
+            ctx.save();
+            ctx.globalAlpha = 0.35;
+            ctx.drawImage(img, i * tileW - 12, (tileH - dh) / 2, dw * 0.08, dh);
+            ctx.restore();
+          }
+          resolve();
+        };
+        img.onerror = () => resolve();
+        img.src = frame.url;
+      })));
+      const tex = new THREE.CanvasTexture(canvas);
+      if (THREE.SRGBColorSpace) tex.colorSpace = THREE.SRGBColorSpace;
+      tex.minFilter = THREE.LinearFilter;
+      tex.magFilter = THREE.LinearFilter;
+      tex.generateMipmaps = false;
+      const radius = 3.2;
+      const height = 2.35;
+      const geo = new THREE.CylinderGeometry(radius, radius, height, 96, 1, true);
+      geo.scale(-1, 1, 1);
+      if (panoramaMesh) {
+        scene.remove(panoramaMesh);
+        panoramaMesh.geometry.dispose();
+        panoramaMesh.material.map?.dispose?.();
+        panoramaMesh.material.dispose();
+      }
+      panoramaMesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map: tex, toneMapped: false }));
+      panoramaMesh.position.copy(cloudCenter);
+      panoramaMesh.position.y = eyeHeight;
+      scene.add(panoramaMesh);
+      panoramaReady = true;
+      pathProgress = 0;
+      setCameraOnPath(0, true);
+      return true;
+    }
+
+    function moveLocal(forward, strafe, up, dt, spd) {
+      // In panoramic twin: forward/back rotate around the room; strafe nudges look
+      const turn = (strafe + forward * 0.35) * 1.35 * spd * dt;
+      yaw -= turn;
+      pitch -= up * 0.9 * spd * dt;
+      pathProgress = ((yaw / (Math.PI * 2)) % 1 + 1) % 1;
+      applyLook();
+    }
+
+    function progress() {
+      if (mode === '3d') return pathProgress;
+      if (mode === 'frames') {
+        if (frames.length <= 1) return 0;
+        return frameIndex / (frames.length - 1);
+      }
+      if (!video.duration) return 0;
+      return Math.max(0, Math.min(1, video.currentTime / video.duration));
+    }
+
+    function setProgress(p) {
+      p = Math.max(0, Math.min(1, p));
+      if (mode === '3d') {
+        pathProgress = p;
+        setCameraOnPath(p, true);
+      } else if (mode === 'frames') {
+        frameIndex = Math.round(p * Math.max(frames.length - 1, 0));
+        still.src = frames[frameIndex]?.url || '';
+      } else if (video.duration) {
+        video.pause();
+        video.currentTime = p * video.duration;
+      }
+      syncUi();
+      renderOverlays();
+    }
+
+    function nudge(deltaSec) {
+      if (mode === '3d') {
+        const spd = Number(speedEl.value) || 1.25;
+        pathProgress = Math.max(0, Math.min(1, pathProgress + deltaSec * 0.12 * spd));
+        setCameraOnPath(pathProgress, true);
+        if (autoPlay && pathProgress >= 0.999) stopAutoPlay();
+      } else if (mode === 'frames') {
+        const step = Math.max(1, Math.round(Math.abs(deltaSec) * 5));
+        frameIndex = Math.max(0, Math.min(frames.length - 1, frameIndex + (deltaSec >= 0 ? step : -step)));
+        still.src = frames[frameIndex]?.url || '';
+        if (autoPlay && frameIndex >= frames.length - 1) stopAutoPlay();
+      } else if (video.duration) {
+        video.pause();
+        video.currentTime = Math.max(0, Math.min(video.duration, video.currentTime + deltaSec));
+        if (autoPlay && video.currentTime >= video.duration - 0.05) stopAutoPlay();
+      }
+      syncUi();
+      renderOverlays();
+    }
+
+    function syncUi() {
+      const p = progress();
+      scrub.value = String(Math.round(p * 1000));
+      posEl.textContent = `${Math.round(p * 100)}%`;
+      if (mode !== '3d') viewport.style.transform = `translate(${panX}px, ${panY}px) scale(1.08)`;
+      autoPlayBtn.classList.toggle('active', autoPlay);
+      autoPlayBtn.textContent = autoPlay ? 'Pause' : 'Auto-play';
+      mode3dBtn.classList.toggle('active', mode === '3d');
+      modeVideoBtn.classList.toggle('active', mode === 'video' || mode === 'frames');
+      modeChip.textContent = mode === '3d' ? '3D explore' : (mode === 'video' ? 'Walk video' : 'Frame walk');
+    }
+
+    function stopAutoPlay() {
+      autoPlay = false;
+      cruise = false;
+      if (mode === 'video') video.pause();
+      syncUi();
+    }
+
+    function startAutoPlay() {
+      autoPlay = true;
+      if (mode === 'video') {
+        video.playbackRate = Math.max(0.75, Math.min(3, Number(speedEl.value) || 1.25));
+        video.play().catch(() => {});
+      }
+      syncUi();
+    }
+
+    function toggleAutoPlay() {
+      if (autoPlay) stopAutoPlay();
+      else {
+        if (mode === 'video' && video.duration && video.currentTime >= video.duration - 0.05) video.currentTime = 0;
+        if (mode === 'frames' && frameIndex >= frames.length - 1) frameIndex = 0;
+        if (mode === '3d' && pathProgress >= 0.99) pathProgress = 0;
+        startAutoPlay();
+      }
+    }
+
+    function setViewMode(next) {
+      stopAutoPlay();
+      mode = next;
+      const is3d = next === '3d';
+      canvas3d.classList.toggle('on', is3d);
+      video.classList.toggle('on', next === 'video');
+      still.classList.toggle('on', next === 'frames');
+      viewport.style.display = is3d ? 'none' : 'grid';
+      overlaysEl.style.opacity = is3d ? '0.35' : '1';
+      if (is3d) {
+        hintEl.textContent = 'Drag to look around · WASD turn · Auto-play tours the panoramic twin';
+        modeHint.textContent = 'Continuous panoramic twin from the lab walk. Photoreal free-roam 3DGS needs CUDA + Nerfstudio.';
+        onResize3d();
+        setCameraOnPath(pathProgress);
+      } else {
+        hintEl.textContent = 'Auto-play or scroll/W·S · Drag to look · Indicators poll your API';
+        modeHint.textContent = 'Video / frame walk-through along the capture path.';
+      }
+      syncUi();
+      renderOverlays();
+    }
+
+    function gaugePct(ov) {
+      const min = Number(ov.min) || 0;
+      const max = Number(ov.max) || 100;
+      const val = Number(ov.value);
+      if (!Number.isFinite(val) || max === min) return 0.5;
+      return Math.max(0, Math.min(1, (val - min) / (max - min)));
+    }
+
+    function escapeHtml(s) {
+      return String(s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+
+    async function refreshIndicator(ov) {
+      if (!ov.api_url) {
+        liveCache[ov.id] = { live: 'red', message: 'No API URL', at: Date.now() };
+        return;
+      }
+      try {
+        const res = await fetch(`/api/status-check?url=${encodeURIComponent(ov.api_url)}`);
+        const data = await res.json();
+        liveCache[ov.id] = {
+          live: data.live === 'green' ? 'green' : 'red',
+          message: data.message || (data.live === 'green' ? 'Healthy' : 'Unhealthy'),
+          at: Date.now(),
+        };
+      } catch (err) {
+        liveCache[ov.id] = { live: 'red', message: err.message || 'Check failed', at: Date.now() };
+      }
+    }
+
+    function renderOverlays() {
+      const p = progress();
+      overlaysEl.innerHTML = overlays.map(ov => {
+        const visible = Math.abs(p - ov.progress) <= (ov.range || 0.08);
+        if (ov.type === 'indicator') {
+          const st = liveCache[ov.id] || { live: 'gray', message: 'Checking…' };
+          return `<div class="ov ${visible ? 'show' : ''}" style="left:${ov.x}%;top:${ov.y}%">
+            <div class="t">${escapeHtml(ov.title)}</div>
+            <div class="status-row"><span class="status-dot ${st.live}"></span><strong>${escapeHtml(st.message)}</strong></div>
+            <div class="u">${escapeHtml(ov.api_url || '')}</div>
+          </div>`;
+        }
+        if (ov.type === 'gauge') {
+          return `<div class="ov ${visible ? 'show' : ''}" style="left:${ov.x}%;top:${ov.y}%;--c:${ov.color}">
+            <div class="t">${escapeHtml(ov.title)}</div>
+            <div class="gauge-ring" style="--p:${Math.round(gaugePct(ov) * 100)}"><span>${escapeHtml(ov.value)}</span></div>
+            <div class="u" style="text-align:center">${escapeHtml(ov.unit || '')}</div>
+          </div>`;
+        }
+        if (ov.type === 'metric') {
+          return `<div class="ov ${visible ? 'show' : ''}" style="left:${ov.x}%;top:${ov.y}%;border-color:${ov.color}55">
+            <div class="t">${escapeHtml(ov.title)}</div>
+            <div class="v" style="color:${ov.color}">${escapeHtml(ov.value)}<span class="u">${escapeHtml(ov.unit || '')}</span></div>
+          </div>`;
+        }
+        return `<div class="ov ${visible ? 'show' : ''}" style="left:${ov.x}%;top:${ov.y}%">
+          <div class="t">${escapeHtml(ov.title)}</div>
+          <div>${escapeHtml(ov.value || ov.unit || '')}</div>
+        </div>`;
+      }).join('');
+
+      ovList.innerHTML = overlays.length
+        ? overlays.map((ov, i) => {
+            const extra = ov.type === 'indicator' ? (liveCache[ov.id]?.live || 'gray') : `${Math.round(ov.progress * 100)}%`;
+            return `<div class="item"><div><strong>${escapeHtml(ov.title)}</strong><br><small>${ov.type} · ${extra}</small></div><button data-i="${i}" class="danger del">Remove</button></div>`;
+          }).join('')
+        : '<p class="muted">No overlays yet.</p>';
+      ovList.querySelectorAll('.del').forEach(btn => {
+        btn.onclick = () => {
+          const removed = overlays.splice(Number(btn.dataset.i), 1)[0];
+          if (removed) delete liveCache[removed.id];
+          renderOverlays();
+        };
+      });
+    }
+
+    // Pointer: 3D look vs 2D pan
+    stage.addEventListener('pointerdown', e => {
+      if (e.target.closest('button,input,select,aside')) return;
+      if (mode === '3d') {
+        lookDragging = true;
+        lastX = e.clientX; lastY = e.clientY;
+        stage.classList.add('looking');
+        stage.setPointerCapture(e.pointerId);
+        canvas3d.focus();
+        return;
+      }
+      dragging = true;
+      lastX = e.clientX; lastY = e.clientY;
+      stage.classList.add('dragging');
+      stage.setPointerCapture(e.pointerId);
+    });
+    stage.addEventListener('pointerup', () => {
+      dragging = false; lookDragging = false;
+      stage.classList.remove('dragging', 'looking');
+    });
+    stage.addEventListener('pointercancel', () => {
+      dragging = false; lookDragging = false;
+      stage.classList.remove('dragging', 'looking');
+    });
+    stage.addEventListener('pointermove', e => {
+      const dx = e.clientX - lastX;
+      const dy = e.clientY - lastY;
+      lastX = e.clientX; lastY = e.clientY;
+      if (mode === '3d' && lookDragging) {
+        yaw -= dx * 0.005;
+        pitch -= dy * 0.004;
+        pathProgress = ((yaw / (Math.PI * 2)) % 1 + 1) % 1;
+        applyLook();
+        syncUi();
+        return;
+      }
+      if (!dragging) return;
+      panX = Math.max(-140, Math.min(140, panX + dx * 0.6));
+      panY = Math.max(-90, Math.min(90, panY + dy * 0.4));
+      if (Math.abs(dy) > Math.abs(dx) * 1.15) {
+        stopAutoPlay();
+        nudge(dy * 0.012 * Number(speedEl.value));
+      }
+      syncUi();
+    });
+    stage.addEventListener('wheel', e => {
+      e.preventDefault();
+      if (mode === '3d') {
+        const spd = Number(speedEl.value) || 1.25;
+        moveLocal(e.deltaY > 0 ? -0.35 : 0.35, 0, 0, 0.16, spd);
+        return;
+      }
+      stopAutoPlay();
+      nudge((e.deltaY > 0 ? 1 : -1) * 0.55 * Number(speedEl.value));
+    }, { passive: false });
+
+    window.addEventListener('keydown', e => {
+      keys[e.code] = true;
+      if (e.code === 'Space') { e.preventDefault(); cruise = true; }
+      if (['KeyW','KeyA','KeyS','KeyD','ArrowUp','ArrowDown','ArrowLeft','ArrowRight'].includes(e.code)) {
+        e.preventDefault();
+      }
+    });
+    window.addEventListener('keyup', e => {
+      keys[e.code] = false;
+      if (e.code === 'Space') cruise = false;
+    });
+
+    autoPlayBtn.onclick = toggleAutoPlay;
+    mode3dBtn.onclick = () => setViewMode('3d');
+    modeVideoBtn.onclick = () => setViewMode(video.classList.contains('on') || (twinMeta?.viewer?.video_url) ? 'video' : (frames.length ? 'frames' : '3d'));
+    document.getElementById('backBtn').onclick = () => { stopAutoPlay(); nudge(-0.55 * Number(speedEl.value)); };
+    document.getElementById('fwdBtn').onclick = () => { stopAutoPlay(); nudge(0.55 * Number(speedEl.value)); };
+    scrub.oninput = () => { stopAutoPlay(); setProgress(Number(scrub.value) / 1000); };
+    speedEl.onchange = () => {
+      if (autoPlay && mode === 'video') video.playbackRate = Math.max(0.75, Math.min(3, Number(speedEl.value) || 1.25));
+    };
+
+    document.getElementById('addOverlay').onclick = () => {
+      const type = ovType.value;
+      const id = `ov-${Date.now()}`;
+      overlays.push({
+        id,
+        type,
+        title: document.getElementById('ovTitle').value.trim() || (type === 'indicator' ? 'Status' : 'Overlay'),
+        value: document.getElementById('ovValue').value.trim() || '0',
+        unit: document.getElementById('ovUnit').value.trim(),
+        api_url: document.getElementById('ovApi').value.trim(),
+        min: Number(document.getElementById('ovMin').value) || 0,
+        max: Number(document.getElementById('ovMax').value) || 100,
+        progress: progress(),
+        range: type === 'indicator' ? 0.12 : 0.09,
+        x: 74,
+        y: 16 + (overlays.length % 4) * 14,
+        color: document.getElementById('ovColor').value || '#4ade80',
+      });
+      if (type === 'indicator') refreshIndicator(overlays[overlays.length - 1]).then(renderOverlays);
+      renderOverlays();
+    };
+
+    document.getElementById('saveOverlays').onclick = async () => {
+      const res = await fetch(`/api/twins/${encodeURIComponent(twinId)}/overlays`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ overlays }),
+      });
+      if (!res.ok) { noteEl.textContent = 'Failed to save overlays'; return; }
+      const data = await res.json();
+      overlays = data.overlays || overlays;
+      noteEl.textContent = `Saved ${overlays.length} overlays.`;
+      renderOverlays();
+      pollIndicators();
+    };
+
+    async function pollIndicators() {
+      const jobs = overlays.filter(o => o.type === 'indicator');
+      await Promise.all(jobs.map(refreshIndicator));
+      renderOverlays();
+    }
+
+    let lastProg = -1;
+    function loop() {
+      const dt = Math.min(0.05, clock ? clock.getDelta() : 0.016);
+      const spd = Number(speedEl.value) || 1.25;
+      let moved = false;
+
+      if (mode === '3d' && threeReady) {
+        let fwd = 0, strafe = 0, up = 0;
+        if (keys.KeyW || keys.ArrowUp) fwd += 1;
+        if (keys.KeyS || keys.ArrowDown) fwd -= 1;
+        if (keys.KeyA || keys.ArrowLeft) strafe -= 1;
+        if (keys.KeyD || keys.ArrowRight) strafe += 1;
+        if (keys.KeyE) up += 1;
+        if (keys.KeyQ) up -= 1;
+        if (fwd || strafe || up) {
+          if (autoPlay) stopAutoPlay();
+          moveLocal(fwd, strafe, up, dt, spd);
+          moved = true;
+        }
+        if (autoPlay || cruise) {
+          pathProgress = Math.min(1, pathProgress + dt * 0.085 * spd);
+          setCameraOnPath(pathProgress, true);
+          moved = true;
+          if (pathProgress >= 0.999) stopAutoPlay();
+        }
+        renderer.render(scene, camera);
+      } else {
+        if (autoPlay) {
+          if (mode === 'frames') { nudge(dt * 2.4 * spd); moved = true; }
+          else if (mode === 'video') {
+            if (video.paused) video.play().catch(() => {});
+            moved = true;
+          }
+        }
+        if (cruise && !autoPlay) { nudge(dt * 2.0 * spd); moved = true; }
+        if (keys.KeyW || keys.ArrowUp) { stopAutoPlay(); nudge(dt * 2.6 * spd); moved = true; }
+        if (keys.KeyS || keys.ArrowDown) { stopAutoPlay(); nudge(-dt * 2.6 * spd); moved = true; }
+        if (keys.KeyA || keys.ArrowLeft) { panX = Math.min(140, panX + 120 * dt); syncUi(); }
+        if (keys.KeyD || keys.ArrowRight) { panX = Math.max(-140, panX - 120 * dt); syncUi(); }
+        if (!dragging) { panX *= 0.985; panY *= 0.985; syncUi(); }
+      }
+
+      const p = progress();
+      if (moved || Math.abs(p - lastProg) > 0.004) {
+        lastProg = p;
+        syncUi();
+        renderOverlays();
+      }
+      requestAnimationFrame(loop);
+    }
+
+    video.addEventListener('ended', stopAutoPlay);
+    video.addEventListener('timeupdate', () => {
+      if (autoPlay || !video.paused) {
+        syncUi();
+        renderOverlays();
+      }
+    });
+
+    async function boot() {
+      const twin = await fetch(`/api/twins/${encodeURIComponent(twinId)}`).then(r => r.json());
+      twinMeta = twin;
+      titleEl.textContent = twin.title || twin.twin_id || twinId;
+      metaEl.textContent = `${twin.frame_count || 0} frames`;
+      overlays = Array.isArray(twin.overlays) ? twin.overlays : [];
+      frames = await fetch(`/api/twins/${encodeURIComponent(twinId)}/frames`).then(r => r.json()).catch(() => []);
+      if (frames.length) still.src = frames[0].url;
+
+      const panoramaUrl = twin.viewer?.panorama_url || `/api/twins/${encodeURIComponent(twinId)}/exports/panorama.jpg`;
+      let twin3d = false;
+      try {
+        const probe = await fetch(panoramaUrl, { method: 'GET', headers: { Range: 'bytes=0-1' } }).catch(() => null);
+        const hasPano = Boolean(probe && (probe.ok || probe.status === 206));
+        if (hasPano) {
+          twin3d = await loadPanoramaScene(panoramaUrl);
+        } else if (frames.length) {
+          twin3d = await loadFallbackPhotoCylinder(frames);
+        }
+        if (twin3d) metaEl.textContent = `${twin.frame_count || frames.length} frames · panoramic twin`;
+      } catch (err) {
+        console.warn('3D panorama failed', err);
+        if (frames.length) {
+          try {
+            twin3d = await loadFallbackPhotoCylinder(frames);
+            metaEl.textContent = `${frames.length} frames · panoramic twin`;
+          } catch (err2) {
+            console.warn(err2);
+          }
+        }
+      }
+
+      const videoUrl = twin.viewer?.video_url || `/api/twins/${encodeURIComponent(twinId)}/exports/walkthrough.mp4`;
+      let hasVideo = Boolean(twin.viewer?.video_url);
+      if (!hasVideo) {
+        const probe = await fetch(videoUrl, { method: 'GET', headers: { Range: 'bytes=0-1' } }).catch(() => null);
+        hasVideo = Boolean(probe && (probe.ok || probe.status === 206));
+      }
+      if (hasVideo) {
+        video.src = videoUrl;
+        video.loop = false;
+        video.muted = true;
+        await new Promise(resolve => {
+          video.addEventListener('loadeddata', () => resolve(), { once: true });
+          video.addEventListener('error', () => resolve('error'), { once: true });
+          video.load();
+        });
+        if (video.readyState >= 2) {
+          video.playbackRate = 1.25;
+          video.pause();
+        } else {
+          hasVideo = false;
+        }
+      }
+
+      if (twin3d) {
+        setViewMode('3d');
+        noteEl.textContent = 'Continuous panoramic twin ready. Drag to look · Auto-play to tour. True photoreal 3DGS needs a CUDA GPU + Nerfstudio.';
+      } else if (hasVideo) {
+        setViewMode('video');
+        noteEl.textContent = 'Walk video ready. Press Auto-play (normal speed).';
+      } else if (frames.length) {
+        setViewMode('frames');
+        noteEl.textContent = 'Frame walkthrough ready. Press Auto-play or walk manually.';
+      } else {
+        noteEl.textContent = 'No twin media found yet.';
+      }
+
+      renderOverlays();
+      syncUi();
+      pollIndicators();
+      setInterval(pollIndicators, 8000);
+      if (!clock) clock = { getDelta: (() => { let t = performance.now(); return () => { const n = performance.now(); const d = (n - t) / 1000; t = n; return d; }; })() };
+      requestAnimationFrame(loop);
+    }
+
+    boot().catch(err => {
+      metaEl.textContent = err.message;
+      noteEl.textContent = err.message;
+    });
+  </script>
+</body>
+</html>

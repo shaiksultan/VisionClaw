@@ -2,6 +2,7 @@ package com.meta.wearable.dat.externalsampleapps.cameraaccess.webrtc
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.media.AudioManager
 import android.util.Log
 import org.webrtc.AudioSource
 import org.webrtc.AudioTrack
@@ -19,6 +20,7 @@ import org.webrtc.SdpObserver
 import org.webrtc.SessionDescription
 import org.webrtc.VideoSource
 import org.webrtc.VideoTrack
+import org.webrtc.audio.JavaAudioDeviceModule
 
 interface WebRTCClientDelegate {
     fun onConnectionStateChanged(state: PeerConnection.IceConnectionState)
@@ -30,6 +32,20 @@ interface WebRTCClientDelegate {
 class WebRTCClient(private val context: Context) {
     companion object {
         private const val TAG = "WebRTCClient"
+        @Volatile private var factoryInitialized = false
+
+        private fun ensureFactoryInitialized(context: Context) {
+            if (factoryInitialized) return
+            synchronized(this) {
+                if (factoryInitialized) return
+                PeerConnectionFactory.initialize(
+                    PeerConnectionFactory.InitializationOptions.builder(context.applicationContext)
+                        .setEnableInternalTracer(false)
+                        .createInitializationOptions()
+                )
+                factoryInitialized = true
+            }
+        }
     }
 
     var delegate: WebRTCClientDelegate? = null
@@ -40,27 +56,34 @@ class WebRTCClient(private val context: Context) {
     private var localAudioTrack: AudioTrack? = null
     private var remoteVideoTrack: VideoTrack? = null
     private var videoSource: VideoSource? = null
+    private var audioSource: AudioSource? = null
+    private var audioDeviceModule: JavaAudioDeviceModule? = null
     private var customCapturer: CustomVideoCapturer? = null
+    private var previousAudioMode: Int = AudioManager.MODE_NORMAL
+    private var previousSpeakerphone: Boolean = false
 
     val eglBase: EglBase = EglBase.create()
 
     fun setup(iceServers: List<PeerConnection.IceServer>?) {
-        // Initialize PeerConnectionFactory
-        PeerConnectionFactory.initialize(
-            PeerConnectionFactory.InitializationOptions.builder(context)
-                .setEnableInternalTracer(false)
-                .createInitializationOptions()
-        )
+        ensureFactoryInitialized(context)
+        configureAudioForCall(true)
 
         val encoderFactory = DefaultVideoEncoderFactory(eglBase.eglBaseContext, true, true)
         val decoderFactory = DefaultVideoDecoderFactory(eglBase.eglBaseContext)
+        val adm = JavaAudioDeviceModule.builder(context.applicationContext)
+            .setUseHardwareAcousticEchoCanceler(true)
+            .setUseHardwareNoiseSuppressor(true)
+            .createAudioDeviceModule()
+        audioDeviceModule = adm
 
         peerConnectionFactory = PeerConnectionFactory.builder()
+            .setAudioDeviceModule(adm)
             .setVideoEncoderFactory(encoderFactory)
             .setVideoDecoderFactory(decoderFactory)
             .createPeerConnectionFactory()
+        // Factory holds the ADM reference; release our builder handle.
+        adm.release()
 
-        // Configure ICE servers
         val rtcConfig = PeerConnection.RTCConfiguration(
             iceServers ?: listOf(
                 PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer()
@@ -68,8 +91,11 @@ class WebRTCClient(private val context: Context) {
         )
         rtcConfig.sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
         rtcConfig.continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
+        rtcConfig.iceTransportsType = PeerConnection.IceTransportsType.ALL
+        rtcConfig.bundlePolicy = PeerConnection.BundlePolicy.MAXBUNDLE
+        rtcConfig.rtcpMuxPolicy = PeerConnection.RtcpMuxPolicy.REQUIRE
+        rtcConfig.tcpCandidatePolicy = PeerConnection.TcpCandidatePolicy.ENABLED
 
-        // Create peer connection
         peerConnection = peerConnectionFactory?.createPeerConnection(
             rtcConfig,
             object : PeerConnection.Observer {
@@ -90,7 +116,6 @@ class WebRTCClient(private val context: Context) {
 
                 override fun onIceCandidate(candidate: IceCandidate?) {
                     candidate?.let {
-                        // Log candidate type for debugging
                         when {
                             it.sdp.contains("relay") -> Log.d(TAG, "ICE candidate: RELAY (TURN)")
                             it.sdp.contains("srflx") -> Log.d(TAG, "ICE candidate: SERVER REFLEXIVE (STUN)")
@@ -103,7 +128,7 @@ class WebRTCClient(private val context: Context) {
                 override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>?) {}
 
                 override fun onAddStream(stream: MediaStream?) {
-                    Log.d(TAG, "Remote stream added: ${stream?.videoTracks?.size} video, ${stream?.audioTracks?.size} audio")
+                    Log.d(TAG, "Remote stream added: video=${stream?.videoTracks?.size} audio=${stream?.audioTracks?.size}")
                     stream?.videoTracks?.firstOrNull()?.let { track ->
                         remoteVideoTrack = track
                         delegate?.onRemoteVideoTrackReceived(track)
@@ -111,7 +136,6 @@ class WebRTCClient(private val context: Context) {
                 }
 
                 override fun onRemoveStream(stream: MediaStream?) {
-                    Log.d(TAG, "Remote stream removed")
                     remoteVideoTrack?.let { track ->
                         remoteVideoTrack = null
                         delegate?.onRemoteVideoTrackRemoved(track)
@@ -122,26 +146,39 @@ class WebRTCClient(private val context: Context) {
                 override fun onRenegotiationNeeded() {
                     Log.d(TAG, "Negotiation needed")
                 }
-                override fun onAddTrack(receiver: RtpReceiver?, streams: Array<out MediaStream>?) {}
+                override fun onAddTrack(receiver: RtpReceiver?, streams: Array<out MediaStream>?) {
+                    val track = receiver?.track()
+                    if (track is VideoTrack) {
+                        Log.d(TAG, "Remote video track via onAddTrack")
+                        remoteVideoTrack = track
+                        delegate?.onRemoteVideoTrackReceived(track)
+                    } else if (track != null) {
+                        Log.d(TAG, "Remote track via onAddTrack kind=${track.kind()}")
+                    }
+                }
             }
         )
 
-        // Create video source + track with custom capturer
         val factory = peerConnectionFactory ?: return
-        videoSource = factory.createVideoSource(false) // false = not a screen cast
+        videoSource = factory.createVideoSource(false)
         customCapturer = CustomVideoCapturer().apply { initialize(videoSource!!) }
         localVideoTrack = factory.createVideoTrack("video0", videoSource).apply {
             setEnabled(true)
         }
         peerConnection?.addTrack(localVideoTrack, listOf("stream0"))
 
-        // Create audio track
-        val audioConstraints = MediaConstraints()
-        val audioSource: AudioSource = factory.createAudioSource(audioConstraints)
-        localAudioTrack = factory.createAudioTrack("audio0", audioSource).apply {
+        val audioConstraints = MediaConstraints().apply {
+            mandatory.add(MediaConstraints.KeyValuePair("googEchoCancellation", "true"))
+            mandatory.add(MediaConstraints.KeyValuePair("googAutoGainControl", "true"))
+            mandatory.add(MediaConstraints.KeyValuePair("googNoiseSuppression", "true"))
+            mandatory.add(MediaConstraints.KeyValuePair("googHighpassFilter", "true"))
+        }
+        audioSource = factory.createAudioSource(audioConstraints)
+        localAudioTrack = factory.createAudioTrack("AUDIO", audioSource).apply {
             setEnabled(true)
         }
         peerConnection?.addTrack(localAudioTrack, listOf("stream0"))
+        Log.d(TAG, "Local audio+video tracks added")
     }
 
     fun pushVideoFrame(bitmap: Bitmap) {
@@ -159,6 +196,7 @@ class WebRTCClient(private val context: Context) {
                 sdp?.let { offer ->
                     peerConnection?.setLocalDescription(object : SdpObserver {
                         override fun onSetSuccess() {
+                            Log.d(TAG, "Local offer set (audio m-line present=${offer.description.contains("m=audio")})")
                             onSuccess(offer)
                         }
                         override fun onSetFailure(error: String?) {
@@ -202,13 +240,41 @@ class WebRTCClient(private val context: Context) {
     fun close() {
         localVideoTrack?.setEnabled(false)
         localAudioTrack?.setEnabled(false)
+        localVideoTrack?.dispose()
+        localAudioTrack?.dispose()
+        localVideoTrack = null
+        localAudioTrack = null
         remoteVideoTrack = null
         customCapturer?.dispose()
         customCapturer = null
+        videoSource?.dispose()
+        videoSource = null
+        audioSource?.dispose()
+        audioSource = null
         peerConnection?.close()
+        peerConnection?.dispose()
         peerConnection = null
         peerConnectionFactory?.dispose()
         peerConnectionFactory = null
+        audioDeviceModule = null
+        configureAudioForCall(false)
         Log.d(TAG, "Peer connection closed")
+    }
+
+    private fun configureAudioForCall(active: Boolean) {
+        val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+        try {
+            if (active) {
+                previousAudioMode = am.mode
+                previousSpeakerphone = am.isSpeakerphoneOn
+                am.mode = AudioManager.MODE_IN_COMMUNICATION
+                am.isSpeakerphoneOn = true
+            } else {
+                am.mode = previousAudioMode
+                am.isSpeakerphoneOn = previousSpeakerphone
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "AudioManager configure failed: ${e.message}")
+        }
     }
 }

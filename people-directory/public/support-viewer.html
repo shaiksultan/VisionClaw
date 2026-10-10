@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Expert Engineer · Live View</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; color: #fff; font-family: -apple-system, BlinkMacSystemFont, sans-serif; height: 100vh; overflow: hidden; }
+    #video-container { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: #111; }
+    #glasses-video { width: 100%; height: 100%; object-fit: contain; background: #000; }
+    #remote-audio { display: none; }
+    #pip-video {
+      position: absolute; top: 16px; right: 16px; width: 140px; height: 186px;
+      object-fit: cover; border-radius: 12px; border: 2px solid rgba(255,255,255,.3);
+      display: none; z-index: 5; background: #1a1a1a;
+    }
+    #controls { position: absolute; top: 16px; right: 16px; display: flex; gap: 8px; z-index: 10; }
+    input {
+      padding: 12px 16px; font-size: 18px; border-radius: 8px; border: 1px solid #333;
+      background: #222; color: #fff; text-transform: uppercase; letter-spacing: 6px; width: 170px; text-align: center;
+    }
+    button {
+      padding: 8px 16px; font-size: 13px; border-radius: 8px; border: none; cursor: pointer; font-weight: 600;
+      background: #0a84ff; color: #fff;
+    }
+    #disconnect-btn, #mic-btn, #cam-btn { display: none; background: #333; }
+    #disconnect-btn { background: #ff3b30; }
+    #mic-btn.muted, #cam-btn.muted { background: #ff3b30; }
+    #status {
+      position: absolute; top: 16px; left: 16px; padding: 6px 14px; border-radius: 16px;
+      font-size: 13px; font-weight: 500; z-index: 10; background: rgba(255,255,255,.1); color: #888;
+    }
+    .status-waiting { background: rgba(255,204,0,.2); color: #ffcc00; }
+    .status-connected { background: rgba(48,209,88,.2); color: #30d158; }
+    .status-disconnected { background: rgba(255,59,48,.2); color: #ff3b30; }
+    #join-panel { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); text-align: center; z-index: 10; }
+    #join-panel h1 { font-size: 24px; margin-bottom: 8px; }
+    #join-panel p { color: #888; margin-bottom: 20px; font-size: 14px; }
+    .join-row { display: flex; gap: 12px; justify-content: center; }
+    #waiting-msg { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); text-align: center; display: none; z-index: 10; color: #888; }
+    #enable-av-btn {
+      display: none; position: absolute; left: 50%; top: 62%; transform: translate(-50%,-50%);
+      z-index: 12; padding: 14px 22px; font-size: 15px; border-radius: 10px;
+    }
+  </style>
+</head>
+<body>
+  <div id="video-container">
+    <!-- Glasses / phone stream always fills the main surface -->
+    <video id="glasses-video" autoplay playsinline muted></video>
+    <!-- Dedicated element for glasses mic — browsers often block unmuted video autoplay -->
+    <audio id="remote-audio" autoplay playsinline></audio>
+    <!-- Optional expert self-view (off by default so it never hides glasses) -->
+    <video id="pip-video" autoplay playsinline muted></video>
+    <div id="status">Not Connected</div>
+    <div id="join-panel">
+      <h1>Expert Engineer</h1>
+      <p>Connecting automatically — no room code needed</p>
+      <div class="join-row">
+        <input id="room-input" maxlength="6" placeholder="CODE" autofocus>
+        <button id="join-btn" onclick="joinRoom()">Join</button>
+      </div>
+    </div>
+    <div id="waiting-msg"><p>Connected. Waiting for glasses stream…</p></div>
+    <button id="enable-av-btn" onclick="enableRemoteAV()">Tap to enable sound</button>
+    <div id="controls">
+      <button id="cam-btn" onclick="toggleCam()">Cam: OFF</button>
+      <button id="mic-btn" onclick="toggleMic()">Mic: ON</button>
+      <button id="disconnect-btn" onclick="disconnectSession()">Disconnect</button>
+    </div>
+  </div>
+  <script>
+    const params = new URLSearchParams(location.search);
+    const SIGNAL_URL = params.get("signal") || "wss://visionclaw-signaling.fly.dev";
+    const TURN_URL = params.get("turn") || "https://visionclaw-signaling.fly.dev/api/turn";
+
+    let ws, pc, localStream = null, localVideoStream = null, pendingCandidates = [], remoteStream = null;
+    let joinRetries = 0;
+    let joinTimer = null;
+    let intentionalClose = false;
+    let evidenceFrames = [];
+    let evidenceTimer = null;
+    let frameWatchTimer = null;
+    let signalingChain = Promise.resolve();
+    const MAX_EVIDENCE_FRAMES = 40;
+    const EVIDENCE_INTERVAL_MS = 500;
+
+    function normalizeRoom(value) {
+      return String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
+    }
+
+    function setStatus(text, cls) {
+      const el = document.getElementById("status");
+      el.textContent = text;
+      el.className = cls ? `status-${cls}` : "";
+    }
+
+    function showControls(visible) {
+      document.getElementById("mic-btn").style.display = visible ? "inline-block" : "none";
+      document.getElementById("cam-btn").style.display = visible ? "inline-block" : "none";
+      document.getElementById("disconnect-btn").style.display = visible ? "inline-block" : "none";
+    }
+
+    function showEnableAv(show, label) {
+      const btn = document.getElementById("enable-av-btn");
+      if (!btn) return;
+      btn.style.display = show ? "inline-block" : "none";
+      if (label) btn.textContent = label;
+    }
+
+    function showJoinPanel(message) {
+      document.getElementById("join-panel").style.display = "block";
+      document.getElementById("waiting-msg").style.display = "none";
+      if (message) document.querySelector("#join-panel p").textContent = message;
+    }
+
+    function enqueueSignaling(work) {
+      signalingChain = signalingChain.then(work).catch((err) => {
+        console.warn("signaling step failed", err);
+      });
+      return signalingChain;
+    }
+
+    function joinRoom(autoRetry = false) {
+      const input = document.getElementById("room-input");
+      const code = normalizeRoom(input.value);
+      input.value = code;
+      if (code.length !== 6) {
+        setStatus("Enter a 6-character room code", "disconnected");
+        return;
+      }
+      if (!autoRetry) joinRetries = 0;
+      clearTimeout(joinTimer);
+      intentionalClose = true;
+      cleanup();
+      intentionalClose = false;
+
+      document.getElementById("join-panel").style.display = "none";
+      document.getElementById("waiting-msg").style.display = "block";
+      document.querySelector("#waiting-msg p").textContent = "Joining glasses video room…";
+      setStatus("Connecting…", "waiting");
+
+      ws = new WebSocket(SIGNAL_URL);
+      const sock = ws;
+      ws.onopen = () => {
+        if (sock.readyState === WebSocket.OPEN) {
+          sock.send(JSON.stringify({ type: "join", room: code }));
+          setStatus("Joining…", "waiting");
+        }
+      };
+      ws.onmessage = (e) => {
+        const msg = JSON.parse(e.data);
+        enqueueSignaling(() => handleSignaling(msg));
+      };
+      ws.onclose = () => {
+        if (intentionalClose) return;
+        setStatus("Disconnected", "disconnected");
+        showControls(false);
+        showJoinPanel("Connection closed. Keep VisionClaw Video open, then Join again.");
+      };
+      ws.onerror = () => {
+        if (intentionalClose) return;
+        setStatus("Signaling error", "disconnected");
+      };
+    }
+
+    function retryJoinSoon(reason) {
+      joinRetries += 1;
+      if (joinRetries > 12) {
+        setStatus(reason || "Room not found", "disconnected");
+        showJoinPanel("Room not found. Keep Video active on the glasses/phone, then Join again.");
+        return;
+      }
+      setStatus(`Room not ready — retry ${joinRetries}/12…`, "waiting");
+      document.getElementById("join-panel").style.display = "none";
+      document.getElementById("waiting-msg").style.display = "block";
+      document.querySelector("#waiting-msg p").textContent = "Waiting for glasses/mobile room… keep Video active on the device.";
+      clearTimeout(joinTimer);
+      joinTimer = setTimeout(() => joinRoom(true), 2000);
+    }
+
+    async function handleSignaling(msg) {
+      switch (msg.type) {
+        case "room_joined":
+          joinRetries = 0;
+          setStatus("Waiting for glasses…", "waiting");
+          document.getElementById("join-panel").style.display = "none";
+          document.getElementById("waiting-msg").style.display = "block";
+          document.querySelector("#waiting-msg p").textContent = "Connected to room. Waiting for glasses offer…";
+          break;
+        case "offer":
+          document.getElementById("waiting-msg").style.display = "none";
+          pendingCandidates = [];
+          await setupPeerConnection();
+          await pc.setRemoteDescription({ type: "offer", sdp: msg.sdp });
+          for (const c of pendingCandidates) {
+            try { await pc.addIceCandidate(c); } catch (err) { console.warn(err); }
+          }
+          pendingCandidates = [];
+          const answer = await pc.createAnswer();
+          await pc.setLocalDescription(answer);
+          if (ws?.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ type: "answer", sdp: answer.sdp }));
+          }
+          setStatus("Negotiating video…", "waiting");
+          break;
+        case "candidate": {
+          const candidate = {
+            candidate: msg.candidate,
+            sdpMid: msg.sdpMid,
+            sdpMLineIndex: msg.sdpMLineIndex,
+          };
+          if (pc && pc.remoteDescription) {
+            try { await pc.addIceCandidate(candidate); } catch (err) { console.warn(err); }
+          } else {
+            pendingCandidates.push(candidate);
+          }
+          break;
+        }
+        case "peer_left":
+          if (pc) { pc.close(); pc = null; }
+          resetGlassesVideo();
+          setStatus("Waiting for glasses…", "waiting");
+          document.getElementById("waiting-msg").style.display = "block";
+          document.querySelector("#waiting-msg p").textContent = "Glasses disconnected. Waiting to reconnect…";
+          showControls(false);
+          break;
+        case "error":
+          if (/room not found/i.test(msg.message || "")) {
+            retryJoinSoon(msg.message);
+          } else {
+            setStatus(msg.message || "Room error", "disconnected");
+            showJoinPanel(msg.message || "Could not join room.");
+          }
+          break;
+      }
+    }
+
+    async function setupPeerConnection() {
+      if (pc) { pc.close(); pc = null; }
+      let iceServers = [
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:stun1.l.google.com:19302" },
+      ];
+      try {
+        const resp = await fetch(TURN_URL);
+        const creds = await resp.json();
+        if (creds?.iceServers) {
+          for (const s of creds.iceServers) {
+            iceServers.push({ urls: s.urls, username: s.username, credential: s.credential });
+          }
+        } else if (creds?.urls) {
+          iceServers.push({ urls: creds.urls, username: creds.username, credential: creds.credential });
+        }
+      } catch (e) {
+        console.warn("TURN fetch failed", e);
+      }
+
+      pc = new RTCPeerConnection({ iceServers, iceCandidatePoolSize: 2 });
+
+      // Expert side: mic only by default. PC webcam used to fill the screen and hide glasses video.
+      try {
+        localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        localStream.getTracks().forEach((t) => pc.addTrack(t, localStream));
+      } catch {
+        localStream = null;
+      }
+      localVideoStream = null;
+      document.getElementById("pip-video").style.display = "none";
+      document.getElementById("cam-btn").textContent = "Cam: OFF";
+
+      pc.ontrack = async (e) => {
+        const stream = e.streams?.[0] || (e.track ? new MediaStream([e.track]) : null);
+        if (!stream) return;
+        if (!remoteStream) remoteStream = new MediaStream();
+        if (e.track && !remoteStream.getTracks().includes(e.track)) {
+          remoteStream.addTrack(e.track);
+        }
+        console.log("ontrack", e.track?.kind, "audioTracks=", remoteStream.getAudioTracks().length);
+        await attachGlassesStream();
+      };
+
+      pc.onicecandidate = (e) => {
+        if (!e.candidate || !ws || ws.readyState !== WebSocket.OPEN) return;
+        ws.send(JSON.stringify({
+          type: "candidate",
+          candidate: e.candidate.candidate,
+          sdpMid: e.candidate.sdpMid,
+          sdpMLineIndex: e.candidate.sdpMLineIndex,
+        }));
+      };
+
+      pc.oniceconnectionstatechange = () => {
+        const state = pc?.iceConnectionState;
+        console.log("ICE", state);
+        switch (state) {
+          case "connected":
+          case "completed":
+            setStatus("Live", "connected");
+            showControls(true);
+            attachGlassesStream();
+            startEvidenceCapture();
+            startFrameWatch();
+            break;
+          case "checking":
+            setStatus("Connecting media…", "waiting");
+            break;
+          case "disconnected":
+            setStatus("Reconnecting…", "waiting");
+            break;
+          case "failed":
+            setStatus("Connection failed — tap retry", "disconnected");
+            showEnableAv(true, "Retry video connection");
+            document.getElementById("enable-av-btn").onclick = () => {
+              showEnableAv(false);
+              document.getElementById("enable-av-btn").onclick = enableRemoteAV;
+              joinRoom(true);
+            };
+            break;
+          case "closed":
+            setStatus("Disconnected", "disconnected");
+            showControls(false);
+            break;
+        }
+      };
+    }
+
+    async function attachGlassesStream() {
+      if (!remoteStream) return;
+      const video = document.getElementById("glasses-video");
+      const audioEl = document.getElementById("remote-audio");
+      // Video stays muted for reliable autoplay; audio plays on the dedicated element.
+      if (video.srcObject !== remoteStream) video.srcObject = remoteStream;
+      remoteStream.getAudioTracks().forEach((t) => { t.enabled = true; });
+      remoteStream.getVideoTracks().forEach((t) => { t.enabled = true; });
+
+      const audioOnly = new MediaStream(remoteStream.getAudioTracks());
+      if (audioEl && audioOnly.getAudioTracks().length) {
+        if (audioEl.srcObject !== audioOnly) audioEl.srcObject = audioOnly;
+        audioEl.muted = false;
+        audioEl.volume = 1;
+        try {
+          await audioEl.play();
+          showEnableAv(false);
+        } catch (e) {
+          console.warn("remote audio play blocked", e);
+          showEnableAv(true, "Tap to enable sound");
+        }
+      }
+
+      video.muted = true;
+      try {
+        await video.play();
+      } catch (e) {
+        console.warn("glasses video play failed", e);
+        showEnableAv(true, "Tap to enable video & sound");
+      }
+      document.getElementById("waiting-msg").style.display = "none";
+      startEvidenceCapture();
+      startFrameWatch();
+    }
+
+    async function enableRemoteAV() {
+      showEnableAv(false);
+      const video = document.getElementById("glasses-video");
+      const audioEl = document.getElementById("remote-audio");
+      if (remoteStream) {
+        remoteStream.getAudioTracks().forEach((t) => { t.enabled = true; });
+        remoteStream.getVideoTracks().forEach((t) => { t.enabled = true; });
+      }
+      if (audioEl) {
+        audioEl.muted = false;
+        audioEl.volume = 1;
+        if (remoteStream?.getAudioTracks?.().length) {
+          audioEl.srcObject = new MediaStream(remoteStream.getAudioTracks());
+        }
+        try { await audioEl.play(); } catch (e) { console.warn("audio unlock failed", e); }
+      }
+      if (video) {
+        // Keep video element muted so it doesn't compete; audio element carries mic.
+        video.muted = true;
+        try { await video.play(); } catch (e) { console.warn(e); }
+      }
+      setStatus(pc && (pc.iceConnectionState === "connected" || pc.iceConnectionState === "completed") ? "Live" : "Receiving…", "connected");
+    }
+
+    function startFrameWatch() {
+      if (frameWatchTimer) return;
+      frameWatchTimer = setInterval(() => {
+        const video = document.getElementById("glasses-video");
+        if (!video || !remoteStream) return;
+        const hasVideoTrack = remoteStream.getVideoTracks().some((t) => t.readyState === "live");
+        if (hasVideoTrack && video.videoWidth > 0) {
+          if (pc && (pc.iceConnectionState === "connected" || pc.iceConnectionState === "completed")) {
+            setStatus("Live · glasses", "connected");
+          }
+          document.getElementById("waiting-msg").style.display = "none";
+        } else if (hasVideoTrack) {
+          setStatus("Receiving glasses frames…", "waiting");
+        }
+      }, 1000);
+    }
+
+    function stopFrameWatch() {
+      if (frameWatchTimer) {
+        clearInterval(frameWatchTimer);
+        frameWatchTimer = null;
+      }
+    }
+
+    function captureEvidenceFrame() {
+      try {
+        const video = document.getElementById("glasses-video");
+        if (!video || !video.videoWidth) return;
+        const maxW = 640;
+        const scale = Math.min(1, maxW / video.videoWidth);
+        const w = Math.max(1, Math.round(video.videoWidth * scale));
+        const h = Math.max(1, Math.round(video.videoHeight * scale));
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        canvas.getContext("2d").drawImage(video, 0, 0, w, h);
+        const dataUrl = canvas.toDataURL("image/jpeg", 0.55);
+        if (!dataUrl || dataUrl.length < 100) return;
+        evidenceFrames.push(dataUrl);
+        if (evidenceFrames.length > MAX_EVIDENCE_FRAMES) evidenceFrames.shift();
+      } catch (e) {
+        console.warn("evidence capture failed", e);
+      }
+    }
+
+    function startEvidenceCapture() {
+      if (evidenceTimer) return;
+      evidenceTimer = setInterval(captureEvidenceFrame, EVIDENCE_INTERVAL_MS);
+    }
+
+    function stopEvidenceCapture() {
+      if (evidenceTimer) {
+        clearInterval(evidenceTimer);
+        evidenceTimer = null;
+      }
+    }
+
+    function getEvidenceFrames() {
+      captureEvidenceFrame();
+      return evidenceFrames.slice(-MAX_EVIDENCE_FRAMES);
+    }
+
+    window.addEventListener("message", (event) => {
+      const data = event.data || {};
+      if (data.type === "lab-get-evidence-frames") {
+        event.source?.postMessage({
+          type: "lab-evidence-frames",
+          requestId: data.requestId || null,
+          frames: getEvidenceFrames(),
+          count: evidenceFrames.length,
+        }, "*");
+      }
+      if (data.type === "lab-enable-remote-av") {
+        enableRemoteAV();
+      }
+      if (data.type === "lab-end-viewer") {
+        intentionalClose = true;
+        cleanup();
+        setStatus("Call ended", "disconnected");
+        showControls(false);
+        showJoinPanel("Call ended from glasses / mobile.");
+      }
+    });
+
+    async function toggleCam() {
+      const btn = document.getElementById("cam-btn");
+      const pip = document.getElementById("pip-video");
+      if (localVideoStream) {
+        localVideoStream.getVideoTracks().forEach((t) => t.stop());
+        if (localStream) {
+          localStream.getVideoTracks().forEach((t) => {
+            try { pc?.removeTrack(pc.getSenders().find((s) => s.track === t)); } catch (_) {}
+            t.stop();
+            localStream.removeTrack(t);
+          });
+        }
+        localVideoStream = null;
+        pip.srcObject = null;
+        pip.style.display = "none";
+        btn.textContent = "Cam: OFF";
+        return;
+      }
+      try {
+        const cam = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "user", width: { ideal: 640 }, height: { ideal: 480 } },
+          audio: false,
+        });
+        localVideoStream = cam;
+        cam.getVideoTracks().forEach((t) => {
+          if (localStream) localStream.addTrack(t);
+          if (pc) pc.addTrack(t, localStream || cam);
+        });
+        pip.srcObject = cam;
+        pip.muted = true;
+        pip.style.display = "block";
+        pip.style.transform = "scaleX(-1)";
+        await pip.play().catch(() => {});
+        btn.textContent = "Cam: ON";
+      } catch (e) {
+        console.warn("enable cam failed", e);
+      }
+    }
+
+    function toggleMic() {
+      const track = localStream?.getAudioTracks?.()[0];
+      if (!track) return;
+      track.enabled = !track.enabled;
+      const btn = document.getElementById("mic-btn");
+      btn.textContent = track.enabled ? "Mic: ON" : "Mic: OFF";
+      btn.classList.toggle("muted", !track.enabled);
+    }
+
+    function resetGlassesVideo() {
+      const video = document.getElementById("glasses-video");
+      const audioEl = document.getElementById("remote-audio");
+      video.srcObject = null;
+      if (audioEl) {
+        try { audioEl.pause(); } catch (_) {}
+        audioEl.srcObject = null;
+      }
+      remoteStream = null;
+    }
+
+    function cleanup() {
+      clearTimeout(joinTimer);
+      stopEvidenceCapture();
+      stopFrameWatch();
+      if (pc) { pc.close(); pc = null; }
+      if (ws) { ws.close(); ws = null; }
+      if (localStream) {
+        localStream.getTracks().forEach((t) => t.stop());
+        localStream = null;
+      }
+      if (localVideoStream) {
+        localVideoStream.getTracks().forEach((t) => t.stop());
+        localVideoStream = null;
+      }
+      document.getElementById("pip-video").srcObject = null;
+      document.getElementById("pip-video").style.display = "none";
+      resetGlassesVideo();
+      showEnableAv(false);
+    }
+
+    function disconnectSession() {
+      intentionalClose = true;
+      clearTimeout(joinTimer);
+      cleanup();
+      setStatus("Disconnected", "disconnected");
+      showControls(false);
+      showJoinPanel("Enter the 6-character room code from the glasses / mobile app");
+      document.getElementById("room-input").value = "";
+    }
+
+    document.getElementById("room-input").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") joinRoom();
+    });
+
+    const autoRoom = normalizeRoom(params.get("room") || "");
+    if (autoRoom) document.getElementById("room-input").value = autoRoom;
+    if (params.get("autojoin") === "1" && autoRoom.length === 6) joinRoom();
+  </script>
+</body>
+</html>

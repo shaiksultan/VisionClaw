@@ -37,6 +37,7 @@ import com.meta.wearable.dat.externalsampleapps.cameraaccess.gemini.GeminiSessio
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.phone.PhoneCameraManager
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.wearables.WearablesViewModel
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.webrtc.WebRTCSessionViewModel
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.support.SupportCallRecorder
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
@@ -68,9 +69,10 @@ class StreamViewModel(
   private var videoJob: Job? = null
   private var stateJob: Job? = null
 
-  // VisionClaw additions
+  // LAB VISION additions
   var geminiViewModel: GeminiSessionViewModel? = null
   var webrtcViewModel: WebRTCSessionViewModel? = null
+  @Volatile var supportRecordingActive: Boolean = false
   private var phoneCameraManager: PhoneCameraManager? = null
 
   fun startStream() {
@@ -114,6 +116,7 @@ class StreamViewModel(
       geminiViewModel?.sendVideoFrameIfThrottled(bitmap)
       // Forward to WebRTC (every frame)
       webrtcViewModel?.pushVideoFrame(bitmap)
+      if (supportRecordingActive) SupportCallRecorder.captureFrame(bitmap)
     }
 
     _uiState.update {
@@ -241,6 +244,7 @@ class StreamViewModel(
     geminiViewModel?.sendVideoFrameIfThrottled(bitmap)
     // Forward to WebRTC (every frame)
     webrtcViewModel?.pushVideoFrame(bitmap)
+    if (supportRecordingActive) SupportCallRecorder.captureFrame(bitmap)
   }
 
   // Convert I420 (YYYYYYYY:UUVV) to NV21 (YYYYYYYY:VUVU)

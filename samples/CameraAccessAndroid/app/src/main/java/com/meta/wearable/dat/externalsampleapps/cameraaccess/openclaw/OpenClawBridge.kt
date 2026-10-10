@@ -85,26 +85,53 @@ class OpenClawBridge {
         task: String,
         toolName: String = "execute"
     ): ToolResult = withContext(Dispatchers.IO) {
+        chatCompletion(
+            userContent = task,
+            toolName = toolName,
+        )
+    }
+
+    /**
+     * Send a vision task (screen capture + question) to OpenClaw → ChatGPT and return
+     * the text answer so Gemini Live can speak it back on the glasses/phone.
+     */
+    suspend fun delegateVisionTask(
+        task: String,
+        imageDataUrl: String,
+        toolName: String = "troubleshoot_screen"
+    ): ToolResult = withContext(Dispatchers.IO) {
+        val content = JSONArray()
+            .put(JSONObject().put("type", "text").put("text", task))
+            .put(
+                JSONObject()
+                    .put("type", "image_url")
+                    .put("image_url", JSONObject().put("url", imageDataUrl))
+            )
+        chatCompletion(userContent = content, toolName = toolName)
+    }
+
+    private suspend fun chatCompletion(
+        userContent: Any,
+        toolName: String,
+    ): ToolResult {
         _lastToolCallStatus.value = ToolCallStatus.Executing(toolName)
 
         val url = "${GeminiConfig.openClawHost}:${GeminiConfig.openClawPort}/v1/chat/completions"
 
-        // Append user message
         conversationHistory.add(JSONObject().apply {
             put("role", "user")
-            put("content", task)
+            put("content", userContent)
         })
 
-        // Trim history
         if (conversationHistory.size > MAX_HISTORY_TURNS * 2) {
             val trimmed = conversationHistory.takeLast(MAX_HISTORY_TURNS * 2)
             conversationHistory.clear()
             conversationHistory.addAll(trimmed)
         }
 
-        Log.d(TAG, "Sending ${conversationHistory.size} messages in conversation")
+        Log.d(TAG, "Sending ${conversationHistory.size} messages in conversation ($toolName)")
 
-        try {
+        return try {
             val messagesArray = JSONArray()
             for (msg in conversationHistory) {
                 messagesArray.put(msg)
@@ -133,7 +160,7 @@ class OpenClawBridge {
             if (statusCode !in 200..299) {
                 Log.d(TAG, "Chat failed: HTTP $statusCode - ${responseBody.take(200)}")
                 _lastToolCallStatus.value = ToolCallStatus.Failed(toolName, "HTTP $statusCode")
-                return@withContext ToolResult.Failure("Agent returned HTTP $statusCode")
+                return ToolResult.Failure("Agent returned HTTP $statusCode")
             }
 
             val json = JSONObject(responseBody)
@@ -149,7 +176,7 @@ class OpenClawBridge {
                 })
                 Log.d(TAG, "Agent result: ${content.take(200)}")
                 _lastToolCallStatus.value = ToolCallStatus.Completed(toolName)
-                return@withContext ToolResult.Success(content)
+                return ToolResult.Success(content)
             }
 
             conversationHistory.add(JSONObject().apply {
@@ -158,11 +185,11 @@ class OpenClawBridge {
             })
             Log.d(TAG, "Agent raw: ${responseBody.take(200)}")
             _lastToolCallStatus.value = ToolCallStatus.Completed(toolName)
-            return@withContext ToolResult.Success(responseBody)
+            ToolResult.Success(responseBody)
         } catch (e: Exception) {
             Log.e(TAG, "Agent error: ${e.message}")
             _lastToolCallStatus.value = ToolCallStatus.Failed(toolName, e.message ?: "Unknown")
-            return@withContext ToolResult.Failure("Agent error: ${e.message}")
+            ToolResult.Failure("Agent error: ${e.message}")
         }
     }
 

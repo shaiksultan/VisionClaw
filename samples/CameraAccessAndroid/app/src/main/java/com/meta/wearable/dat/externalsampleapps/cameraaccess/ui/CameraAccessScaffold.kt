@@ -47,9 +47,12 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -57,7 +60,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.meta.wearable.dat.core.types.Permission
 import com.meta.wearable.dat.core.types.PermissionStatus
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.BuildConfig
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.lab.LabDemoClient
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.stream.StreamingMode
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.wearables.WearablesViewModel
+import kotlinx.coroutines.delay
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -69,78 +75,132 @@ fun CameraAccessScaffold(
   val uiState by viewModel.uiState.collectAsStateWithLifecycle()
   val snackbarHostState = remember { SnackbarHostState() }
   val bottomSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+  var showSplash by remember { mutableStateOf(true) }
+  val presenceClient = remember { LabDemoClient() }
 
-  // Observe camera permission errors and show snackbar
-  LaunchedEffect(uiState.recentError) {
-    uiState.recentError?.let { errorMessage ->
-      snackbarHostState.showSnackbar(errorMessage)
-      viewModel.clearCameraPermissionError()
+  LaunchedEffect(Unit) {
+    delay(2600)
+    showSplash = false
+  }
+
+  // Keep Mission Control "Agents connected" updated while this app is open.
+  LaunchedEffect(
+    uiState.isPhoneMode,
+    uiState.isStreaming,
+    uiState.isRegistered,
+    uiState.isSettingsVisible,
+  ) {
+    val mode = when {
+      uiState.isPhoneMode -> StreamingMode.PHONE
+      uiState.isStreaming || uiState.isRegistered -> StreamingMode.GLASSES
+      else -> StreamingMode.PHONE
+    }
+    val page = when {
+      uiState.isSettingsVisible -> "Settings"
+      uiState.isPhoneMode && uiState.isStreaming -> "Phone camera"
+      uiState.isStreaming -> "Glasses stream"
+      uiState.isRegistered -> "Glasses ready"
+      uiState.isPhoneMode -> "Phone home"
+      else -> "Home"
+    }
+    presenceClient.setStreamingMode(mode)
+    presenceClient.setPresenceContext(page, "Telecom Lab")
+    try {
+      while (true) {
+        runCatching { presenceClient.ensureConnected() }
+        kotlinx.coroutines.delay(25_000)
+      }
+    } finally {
+      // Mode/page flips cancel this effect and restart it immediately.
     }
   }
 
-  Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-    Box(modifier = Modifier.fillMaxSize()) {
-      when {
-        uiState.isSettingsVisible ->
-            SettingsScreen(
-                onBack = { viewModel.hideSettings() },
-            )
-        uiState.isStreaming ->
-            StreamScreen(
-                wearablesViewModel = viewModel,
-                isPhoneMode = uiState.isPhoneMode,
-            )
-        uiState.isRegistered ->
-            NonStreamScreen(
-                viewModel = viewModel,
-                onRequestWearablesPermission = onRequestWearablesPermission,
-            )
-        else ->
-            HomeScreen(
-                viewModel = viewModel,
-            )
+  DisposableEffect(Unit) {
+    onDispose {
+      presenceClient.stopPresence()
+      // Best-effort remove from Mission Control connected list.
+      kotlinx.coroutines.runBlocking {
+        runCatching { presenceClient.disconnect() }
       }
+    }
+  }
 
-      SnackbarHost(
-          hostState = snackbarHostState,
-          modifier =
-              Modifier.align(Alignment.BottomCenter)
-                  .navigationBarsPadding()
-                  .padding(horizontal = 16.dp, vertical = 32.dp),
-          snackbar = { data ->
-            Snackbar(
-                shape = RoundedCornerShape(24.dp),
-                containerColor = MaterialTheme.colorScheme.errorContainer,
-                contentColor = MaterialTheme.colorScheme.onErrorContainer,
-            ) {
-              Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = Icons.Default.Error,
-                    contentDescription = "Camera Access error",
-                    tint = MaterialTheme.colorScheme.error,
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(data.visuals.message)
-              }
-            }
-          },
-      )
+  LabVisionTheme {
+    LaunchedEffect(uiState.recentError) {
+      uiState.recentError?.let { errorMessage ->
+        snackbarHostState.showSnackbar(errorMessage)
+        viewModel.clearCameraPermissionError()
+      }
+    }
 
-      if (BuildConfig.DEBUG) {
-        FloatingActionButton(
-            onClick = { viewModel.showDebugMenu() },
-            modifier = Modifier.align(Alignment.CenterEnd),
-        ) {
-          Icon(Icons.Default.BugReport, contentDescription = "Debug Menu")
+    Surface(modifier = modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+      Box(modifier = Modifier.fillMaxSize()) {
+        when {
+          uiState.isSettingsVisible ->
+              SettingsScreen(
+                  onBack = { viewModel.hideSettings() },
+              )
+          uiState.isStreaming ->
+              StreamScreen(
+                  wearablesViewModel = viewModel,
+                  isPhoneMode = uiState.isPhoneMode,
+              )
+          uiState.isRegistered ->
+              NonStreamScreen(
+                  viewModel = viewModel,
+                  onRequestWearablesPermission = onRequestWearablesPermission,
+              )
+          else ->
+              HomeScreen(
+                  viewModel = viewModel,
+              )
         }
 
-        if (uiState.isDebugMenuVisible) {
-          ModalBottomSheet(
-              onDismissRequest = { viewModel.hideDebugMenu() },
-              sheetState = bottomSheetState,
-              modifier = Modifier.fillMaxSize(),
+        if (showSplash) {
+          SplashScreen(modifier = Modifier.fillMaxSize())
+        }
+
+        SnackbarHost(
+            hostState = snackbarHostState,
+            modifier =
+                Modifier.align(Alignment.BottomCenter)
+                    .navigationBarsPadding()
+                    .padding(horizontal = 16.dp, vertical = 32.dp),
+            snackbar = { data ->
+              Snackbar(
+                  shape = RoundedCornerShape(24.dp),
+                  containerColor = MaterialTheme.colorScheme.errorContainer,
+                  contentColor = MaterialTheme.colorScheme.onErrorContainer,
+              ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                  Icon(
+                      imageVector = Icons.Default.Error,
+                      contentDescription = "Camera Access error",
+                      tint = MaterialTheme.colorScheme.error,
+                  )
+                  Spacer(modifier = Modifier.width(8.dp))
+                  Text(data.visuals.message)
+                }
+              }
+            },
+        )
+
+        if (BuildConfig.DEBUG) {
+          FloatingActionButton(
+              onClick = { viewModel.showDebugMenu() },
+              modifier = Modifier.align(Alignment.CenterEnd),
           ) {
-            MockDeviceKitScreen(modifier = Modifier.fillMaxSize())
+            Icon(Icons.Default.BugReport, contentDescription = "Debug Menu")
+          }
+
+          if (uiState.isDebugMenuVisible) {
+            ModalBottomSheet(
+                onDismissRequest = { viewModel.hideDebugMenu() },
+                sheetState = bottomSheetState,
+                modifier = Modifier.fillMaxSize(),
+            ) {
+              MockDeviceKitScreen(modifier = Modifier.fillMaxSize())
+            }
           }
         }
       }

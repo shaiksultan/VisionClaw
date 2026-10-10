@@ -1,7 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2" project="cameraaccess">
+    <string name="app_name">LAB Vision AI</string>
+
+    <!-- Splash -->
+    <string name="splash_title">LAB VISION AI</string>
+    <string name="splash_subtitle">Voice-first intelligence for telecom lab workflows</string>
+    <string name="splash_tagline">Inventory · Knowledge · Troubleshooting · Lab Tests · Evidence · Remote Support</string>
 
     <!-- Home Screen -->
+    <string name="home_brand_title">LAB VISION AI</string>
+    <string name="home_brand_subtitle">Connect Ray-Ban Meta glasses and run professional telecom lab agents by voice.</string>
+    <string name="home_capabilities_title">MISSION AGENTS</string>
+    <string name="home_demo_inventory">Lab Inventory</string>
+    <string name="home_demo_knowledge">Lab Knowledge</string>
+    <string name="home_demo_troubleshoot">Visual Troubleshooting</string>
+    <string name="home_demo_tests">Autonomous Tests</string>
+    <string name="home_demo_tickets">Evidence Tickets</string>
+    <string name="home_demo_support">Expert Engineer</string>
+    <string name="home_phone_mode_button">Start on Phone</string>
     <string name="register_button_title" description="Connect App">Connect my glasses</string>
     <string name="unregister_button_title" description="Disconnect App">Disconnect</string>
     <string name="stream_button_title" description="Start streaming">Start streaming</string>
@@ -16,11 +32,17 @@
 
     <!-- Stream Screen -->
     <string name="live_stream" description="Live Stream">Live stream</string>
+    <string name="support_request_title">Expert Engineer request</string>
+    <string name="support_request_description">What do you need help with?</string>
+    <string name="support_request_start">Start expert call</string>
+    <string name="support_request_started">Expert Engineer call %1$s started. Mission Control is ringing — no room code needed.</string>
+    <string name="support_request_saved">Expert Engineer ticket %1$s saved.</string>
+    <string name="cancel">Cancel</string>
 
     <!-- Non Stream Screen -->
-    <string name="camera_access_icon_description" description="Camera Access icon description">Camera Access icon</string>
-    <string name="non_stream_screen_description" description="Non stream screen description">Tap the Start streaming button to stream video from your glasses or use the camera button to take a photo from your glasses.</string>
-    <string name="non_stream_screen_title" description="Non stream screen title">Stream Your Glasses Camera</string>
+    <string name="camera_access_icon_description" description="LAB VISION icon description">LAB VISION icon</string>
+    <string name="non_stream_screen_description" description="Non stream screen description">Start streaming from glasses or phone. Agents appear below for demos — they activate by voice after you go live.</string>
+    <string name="non_stream_screen_title" description="Non stream screen title">Stream &amp; run lab agents</string>
     <string name="waiting_for_active_device" description="Waiting for active device message">Waiting for an active device</string>
 
     <!-- SharePhotoDialog -->
@@ -50,7 +72,7 @@
 
     <!-- Getting Started Sheet -->
     <string name="getting_started_title" description="Getting Started sheet title">Getting started</string>
-    <string name="getting_started_tip_permission" description="Tip about camera permission">First, Camera Access needs permission to use your glasses camera.</string>
+    <string name="getting_started_tip_permission" description="Tip about camera permission">First, LAB VISION needs permission to use your glasses camera.</string>
     <string name="getting_started_tip_led" description="Tip about capture LED">The capture LED lets others know when you\'re capturing content or going live.</string>
     <string name="getting_started_tip_photo" description="Tip about photo capture">Capture photos by tapping the camera button.</string>
     <string name="getting_started_continue" description="Continue button">Continue</string>

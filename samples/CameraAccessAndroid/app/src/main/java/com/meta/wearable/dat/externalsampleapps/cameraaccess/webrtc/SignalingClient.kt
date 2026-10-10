@@ -10,7 +10,9 @@ import org.json.JSONObject
 import org.webrtc.IceCandidate
 import org.webrtc.SessionDescription
 import java.util.concurrent.Executors
+import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 sealed class SignalingMessage {
     data class RoomCreated(val room: String) : SignalingMessage()
@@ -27,6 +29,7 @@ sealed class SignalingMessage {
 class SignalingClient {
     companion object {
         private const val TAG = "SignalingClient"
+        private const val PING_INTERVAL_SEC = 20L
     }
 
     var onMessageReceived: ((SignalingMessage) -> Unit)? = null
@@ -34,14 +37,19 @@ class SignalingClient {
     var onDisconnected: ((String?) -> Unit)? = null
 
     private var webSocket: WebSocket? = null
+    private val intentionalClose = AtomicBoolean(false)
     private val sendExecutor = Executors.newSingleThreadExecutor()
+    private val pingExecutor = Executors.newSingleThreadScheduledExecutor()
+    private var pingTask: ScheduledFuture<*>? = null
     private val client = OkHttpClient.Builder()
-        .readTimeout(0, TimeUnit.MILLISECONDS) // No read timeout for WebSocket
+        .readTimeout(0, TimeUnit.MILLISECONDS)
+        .pingInterval(PING_INTERVAL_SEC, TimeUnit.SECONDS)
         .connectTimeout(30, TimeUnit.SECONDS)
         .build()
 
     fun connect(url: String) {
-        disconnect()
+        disconnect(notify = false)
+        intentionalClose.set(false)
 
         val request = Request.Builder()
             .url(url)
@@ -50,6 +58,7 @@ class SignalingClient {
         webSocket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 Log.d(TAG, "Connected to $url")
+                startAppPing(webSocket)
                 onConnected?.invoke()
             }
 
@@ -64,12 +73,18 @@ class SignalingClient {
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 Log.d(TAG, "Closed: $reason")
-                onDisconnected?.invoke(reason.ifEmpty { null })
+                stopAppPing()
+                if (!intentionalClose.get()) {
+                    onDisconnected?.invoke(reason.ifEmpty { null })
+                }
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 Log.e(TAG, "Failure: ${t.message}")
-                onDisconnected?.invoke(t.message)
+                stopAppPing()
+                if (!intentionalClose.get()) {
+                    onDisconnected?.invoke(t.message)
+                }
             }
         })
     }
@@ -101,9 +116,25 @@ class SignalingClient {
         )
     }
 
-    fun disconnect() {
+    fun disconnect(notify: Boolean = true) {
+        if (!notify) intentionalClose.set(true)
+        stopAppPing()
         webSocket?.close(1000, "Going away")
         webSocket = null
+    }
+
+    private fun startAppPing(socket: WebSocket) {
+        stopAppPing()
+        pingTask = pingExecutor.scheduleAtFixedRate({
+            runCatching {
+                socket.send(JSONObject().put("type", "ping").toString())
+            }
+        }, PING_INTERVAL_SEC, PING_INTERVAL_SEC, TimeUnit.SECONDS)
+    }
+
+    private fun stopAppPing() {
+        pingTask?.cancel(false)
+        pingTask = null
     }
 
     private fun sendJSON(json: JSONObject) {
@@ -116,37 +147,24 @@ class SignalingClient {
     private fun handleMessage(text: String) {
         try {
             val json = JSONObject(text)
-            val type = json.optString("type", "")
-
-            when (type) {
+            when (json.optString("type", "")) {
+                "pong", "ping" -> Unit
                 "room_created" -> {
                     val room = json.optString("room", "")
-                    if (room.isNotEmpty()) {
-                        onMessageReceived?.invoke(SignalingMessage.RoomCreated(room))
-                    }
+                    if (room.isNotEmpty()) onMessageReceived?.invoke(SignalingMessage.RoomCreated(room))
                 }
-                "room_joined" -> {
-                    onMessageReceived?.invoke(SignalingMessage.RoomJoined)
-                }
+                "room_joined" -> onMessageReceived?.invoke(SignalingMessage.RoomJoined)
                 "room_rejoined" -> {
                     val room = json.optString("room", "")
-                    if (room.isNotEmpty()) {
-                        onMessageReceived?.invoke(SignalingMessage.RoomRejoined(room))
-                    }
+                    if (room.isNotEmpty()) onMessageReceived?.invoke(SignalingMessage.RoomRejoined(room))
                 }
-                "peer_joined" -> {
-                    onMessageReceived?.invoke(SignalingMessage.PeerJoined)
-                }
-                "peer_left" -> {
-                    onMessageReceived?.invoke(SignalingMessage.PeerLeft)
-                }
+                "peer_joined" -> onMessageReceived?.invoke(SignalingMessage.PeerJoined)
+                "peer_left" -> onMessageReceived?.invoke(SignalingMessage.PeerLeft)
                 "offer" -> {
                     val sdp = json.optString("sdp", "")
                     if (sdp.isNotEmpty()) {
                         onMessageReceived?.invoke(
-                            SignalingMessage.Offer(
-                                SessionDescription(SessionDescription.Type.OFFER, sdp)
-                            )
+                            SignalingMessage.Offer(SessionDescription(SessionDescription.Type.OFFER, sdp))
                         )
                     }
                 }
@@ -154,9 +172,7 @@ class SignalingClient {
                     val sdp = json.optString("sdp", "")
                     if (sdp.isNotEmpty()) {
                         onMessageReceived?.invoke(
-                            SignalingMessage.Answer(
-                                SessionDescription(SessionDescription.Type.ANSWER, sdp)
-                            )
+                            SignalingMessage.Answer(SessionDescription(SessionDescription.Type.ANSWER, sdp))
                         )
                     }
                 }
@@ -166,9 +182,7 @@ class SignalingClient {
                     val sdpMLineIndex = json.optInt("sdpMLineIndex", 0)
                     if (candidate.isNotEmpty()) {
                         onMessageReceived?.invoke(
-                            SignalingMessage.Candidate(
-                                IceCandidate(sdpMid, sdpMLineIndex, candidate)
-                            )
+                            SignalingMessage.Candidate(IceCandidate(sdpMid, sdpMLineIndex, candidate))
                         )
                     }
                 }
@@ -176,9 +190,7 @@ class SignalingClient {
                     val msg = json.optString("message", "Unknown signaling error")
                     onMessageReceived?.invoke(SignalingMessage.Error(msg))
                 }
-                else -> {
-                    Log.w(TAG, "Unknown message type: $type")
-                }
+                else -> Log.w(TAG, "Unknown message type: ${json.optString("type")}")
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to parse signaling message: ${e.message}")
