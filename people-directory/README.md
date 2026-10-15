@@ -22,7 +22,7 @@ The SQLite database is created at `data/people.db`.
 4. **Evidence Ticket Agent** — “Create a ticket with evidence of this alarm.”  
    Flow: describe what the evidence shows → choose screenshot or short video → capture from glasses → tracked ticket with code like `TKT-20260902-0001`.
 5. **Expert Engineer Agent** — live support from AI glasses.
-6. **ab-twin** — digital twin from lab walk-through.
+6. **ab-twin / Digital Capture** — walk-through digital capture from lab video.
 
 ## API
 

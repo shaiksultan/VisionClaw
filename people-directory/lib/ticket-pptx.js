@@ -16,6 +16,8 @@ function parseTicketReportScope(text) {
 
 function wantsTicketPptx(text) {
   const lower = String(text || "").toLowerCase();
+  // Leave chart/analysis exports to mission-analytics generative UI.
+  if (/\b(analy[sz]e|analysis|analytics|chart|charts|graph|graphs|dashboard|kpi)\b/.test(lower)) return false;
   const mentionsTickets = /\btickets?\b/.test(lower) || /\beviden[cs]e\b/.test(lower);
   const mentionsDeck = /\b(pptx|powerpoint|\.ppt\b|ppt\b|slide\s*deck|presentation|slides?)\b/.test(lower);
   const exportVerb = /\b(create|generate|make|export|build|prepare|download)\b/.test(lower);

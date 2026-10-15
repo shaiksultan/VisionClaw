@@ -305,6 +305,29 @@ class GeminiSessionViewModel(application: Application) : AndroidViewModel(applic
                         isGeminiActive = false,
                         connectionState = GeminiConnectionState.Disconnected
                     )
+                    return@connect
+                }
+
+                // First speak: UAELAB and Technology Innovation Agent intro + how to help
+                viewModelScope.launch {
+                    var attempts = 0
+                    while (
+                        attempts < 30 &&
+                        _uiState.value.isGeminiActive &&
+                        _uiState.value.connectionState != GeminiConnectionState.Ready
+                    ) {
+                        delay(100)
+                        attempts += 1
+                    }
+                    if (!_uiState.value.isGeminiActive) return@launch
+                    if (_uiState.value.connectionState != GeminiConnectionState.Ready) return@launch
+                    delay(400)
+                    geminiService.sendTextMessage(
+                        "[System] Session just started. Speak first now as the UAELAB and Technology Innovation Agent. " +
+                            "Introduce yourself by that exact name, briefly say how you can help with lab inventory, " +
+                            "procedures and knowledge, evidence tickets, Expert Engineer live support, autonomous lab tests, " +
+                            "and digital captures, then ask how you can help. Keep it to a few short sentences. Do not call tools yet.",
+                    )
                 }
 
                 // Connect to OpenClaw event stream for proactive notifications

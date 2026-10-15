@@ -454,6 +454,13 @@
     document.getElementById('room-input').addEventListener('keydown', (e) => {
       if (e.key === 'Enter') joinRoom();
     });
+
+    const params = new URLSearchParams(location.search);
+    const autoRoom = (params.get('room') || '').toUpperCase().trim();
+    if (params.get('autojoin') === '1' && autoRoom.length === 6) {
+      document.getElementById('room-input').value = autoRoom;
+      joinRoom();
+    }
   </script>
 </body>
 </html>

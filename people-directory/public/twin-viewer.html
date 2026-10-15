@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>ab-twin Viewer</title>
+  <title>Digital Capture Viewer</title>
   <style>
     :root{--bg:#070b0a;--panel:rgba(12,18,16,.94);--line:#2a3330;--text:#f3f6f4;--muted:#8a9691;--accent:#4ade80}
     *{box-sizing:border-box}
@@ -59,9 +59,9 @@
 </head>
 <body>
   <header>
-    <h1>ab-twin <span>Digital Twin</span></h1>
+    <h1>Digital Capture <span>Gaussian splatting</span></h1>
     <div style="display:flex;gap:8px;align-items:center">
-      <span class="chip" id="modeChip">3D explore</span>
+      <span class="chip" id="modeChip">Play capture</span>
       <span class="muted" id="meta">Loading…</span>
     </div>
   </header>
@@ -70,12 +70,12 @@
       <canvas id="canvas3d" tabindex="0"></canvas>
       <div id="viewport">
         <video id="video" playsinline preload="auto"></video>
-        <img id="still" alt="Twin frame">
+        <img id="still" alt="Capture frame">
       </div>
       <div id="overlays"></div>
-      <div id="hint">Click canvas · drag look · WASD move · Auto-play walks the path</div>
+      <div id="hint">Auto-play the walk-through · drag to look · WASD to step</div>
       <div id="hud">
-        <strong id="title">Twin</strong>
+        <strong id="title">Digital Capture</strong>
         <p id="note">Loading…</p>
       </div>
     </div>
@@ -83,10 +83,20 @@
       <h2>View mode</h2>
       <div class="card">
         <div class="mode-row">
-          <button class="primary active" type="button" id="mode3dBtn">3D explore</button>
-          <button type="button" id="modeVideoBtn">Walk video</button>
+          <button class="primary active" type="button" id="modeVideoBtn">Play capture</button>
+          <button type="button" id="mode3dBtn">Look around</button>
         </div>
-        <p class="muted" id="modeHint">Continuous panoramic twin (stitched walkthrough). Photoreal 3DGS needs a CUDA GPU.</p>
+        <p class="muted" id="modeHint">Full walk-through video of the lab capture. Look around shows each photo immersively as you turn.</p>
+      </div>
+
+      <h2>Offline real twin</h2>
+      <div class="card">
+        <div class="btns">
+          <a class="primary" id="downloadMp4Link" href="#" download style="text-decoration:none;display:inline-flex;align-items:center">Download MP4</a>
+        </div>
+        <p class="muted">Download capture → process offline with Gaussian splatting → upload PLY/SPLAT/MP4 from Mission Control Digital Capture page.</p>
+        <p class="muted" id="processedInfo">No processed twin uploaded yet.</p>
+        <div class="btns" id="processedLinks" style="display:none"></div>
       </div>
 
       <h2>Walk control</h2>
@@ -170,7 +180,7 @@
 
     let overlays = [];
     let frames = [];
-    let mode = '3d'; // 3d | video | frames
+    let mode = 'video'; // 3d | video | frames
     let frameIndex = 0;
     let panX = 0, panY = 0;
     let dragging = false, lastX = 0, lastY = 0;
@@ -181,8 +191,8 @@
     let twinMeta = null;
     let pathProgress = 0;
 
-    // --- Three.js state ---
-    let renderer, scene, camera, panoramaMesh, clock;
+    // --- Three.js state (full-frame look-around) ---
+    let renderer, scene, camera, photoPlane, clock;
     let yaw = 0, pitch = 0;
     let lookDragging = false;
     let cloudCenter = new THREE.Vector3(0, 1.15, 0);
@@ -190,6 +200,11 @@
     let eyeHeight = 1.15;
     let threeReady = false;
     let panoramaReady = false;
+    let orbitFrames = [];
+    let orbitTextures = [];
+    let orbitFrameIndex = -1;
+    let orbitLoading = null;
+    const _fwd = new THREE.Vector3();
 
     function syncTypeFields() {
       const ind = ovType.value === 'indicator';
@@ -202,25 +217,25 @@
     syncTypeFields();
 
     function setCameraOnPath(t, lockLook = true) {
-      // Inside continuous panoramic cylinder — progress rotates the view around the lab
-      const angle = t * Math.PI * 2;
-      camera.position.set(
-        cloudCenter.x + Math.cos(angle) * pathRadius,
-        eyeHeight,
-        cloudCenter.z + Math.sin(angle) * pathRadius,
-      );
+      if (!camera) return;
+      // Look-around: progress selects which capture photo fills the view
+      camera.position.set(cloudCenter.x, eyeHeight, cloudCenter.z);
       if (lockLook || autoPlay || cruise) {
-        yaw = angle + Math.PI;
+        yaw = t * Math.PI * 2;
         pitch = 0;
       }
       applyLook();
+      updateOrbitFrameFromProgress(t);
+      layoutPhotoPlane();
     }
 
     function applyLook() {
-      pitch = Math.max(-1.15, Math.min(1.15, pitch));
+      if (!camera) return;
+      pitch = Math.max(-0.55, Math.min(0.55, pitch));
       const q = new THREE.Quaternion();
       q.setFromEuler(new THREE.Euler(pitch, yaw, 0, 'YXZ'));
       camera.quaternion.copy(q);
+      layoutPhotoPlane();
     }
 
     function initThree() {
@@ -230,16 +245,9 @@
       renderer.setSize(stage.clientWidth, stage.clientHeight, false);
       renderer.setClearColor(0x050807, 1);
       scene = new THREE.Scene();
-      camera = new THREE.PerspectiveCamera(78, stage.clientWidth / Math.max(stage.clientHeight, 1), 0.05, 80);
+      camera = new THREE.PerspectiveCamera(70, stage.clientWidth / Math.max(stage.clientHeight, 1), 0.05, 80);
       clock = new THREE.Clock();
       scene.add(new THREE.AmbientLight(0xffffff, 1));
-      const floor = new THREE.Mesh(
-        new THREE.CircleGeometry(4.2, 48),
-        new THREE.MeshBasicMaterial({ color: 0x0a100e }),
-      );
-      floor.rotation.x = -Math.PI / 2;
-      floor.position.y = 0.02;
-      scene.add(floor);
       threeReady = true;
       window.addEventListener('resize', onResize3d);
     }
@@ -250,6 +258,7 @@
       camera.aspect = w / Math.max(h, 1);
       camera.updateProjectionMatrix();
       renderer.setSize(w, h, false);
+      layoutPhotoPlane();
     }
 
     function loadTexture(url) {
@@ -260,7 +269,7 @@
           url,
           tex => {
             if (THREE.SRGBColorSpace) tex.colorSpace = THREE.SRGBColorSpace;
-            tex.wrapS = THREE.RepeatWrapping;
+            tex.wrapS = THREE.ClampToEdgeWrapping;
             tex.wrapT = THREE.ClampToEdgeWrapping;
             tex.minFilter = THREE.LinearFilter;
             tex.magFilter = THREE.LinearFilter;
@@ -273,100 +282,94 @@
       });
     }
 
-    async function loadPanoramaScene(url) {
-      initThree();
-      const tex = await loadTexture(url);
-      const radius = 3.2;
-      const height = 2.35;
-      const geo = new THREE.CylinderGeometry(radius, radius, height, 96, 1, true);
-      // Flip so texture is viewed from inside
-      geo.scale(-1, 1, 1);
-      const mat = new THREE.MeshBasicMaterial({
-        map: tex,
-        side: THREE.FrontSide,
-        toneMapped: false,
-      });
-      if (panoramaMesh) {
-        scene.remove(panoramaMesh);
-        panoramaMesh.geometry.dispose();
-        panoramaMesh.material.map?.dispose?.();
-        panoramaMesh.material.dispose();
+    function layoutPhotoPlane() {
+      if (!photoPlane || !camera) return;
+      const dist = 2.4;
+      const vFov = (camera.fov * Math.PI) / 180;
+      const height = 2 * Math.tan(vFov / 2) * dist * 1.02;
+      const width = height * camera.aspect;
+      photoPlane.scale.set(width, height, 1);
+      camera.getWorldDirection(_fwd);
+      photoPlane.position.copy(camera.position).addScaledVector(_fwd, dist);
+      photoPlane.quaternion.copy(camera.quaternion);
+    }
+
+    function updateOrbitFrameFromProgress(t) {
+      if (!orbitFrames.length) return;
+      const idx = Math.max(0, Math.min(orbitFrames.length - 1, Math.round(t * (orbitFrames.length - 1))));
+      if (idx === orbitFrameIndex) return;
+      void showOrbitFrame(idx);
+    }
+
+    async function showOrbitFrame(idx) {
+      if (!orbitFrames[idx] || !photoPlane) return;
+      orbitFrameIndex = idx;
+      const token = `${idx}-${Date.now()}`;
+      orbitLoading = token;
+      try {
+        let tex = orbitTextures[idx];
+        if (!tex) {
+          tex = await loadTexture(orbitFrames[idx].url);
+          orbitTextures[idx] = tex;
+        }
+        if (orbitLoading !== token) return;
+        const prev = photoPlane.material.map;
+        photoPlane.material.map = tex;
+        photoPlane.material.needsUpdate = true;
+        layoutPhotoPlane();
+        // Keep nearby textures; dispose far ones later if memory grows
+        if (prev && prev !== tex && Math.abs((orbitTextures.indexOf(prev)) - idx) > 6) {
+          /* keep cache warm */
+        }
+      } catch (err) {
+        console.warn('orbit frame failed', err);
       }
-      panoramaMesh = new THREE.Mesh(geo, mat);
-      panoramaMesh.position.copy(cloudCenter);
-      panoramaMesh.position.y = eyeHeight;
-      scene.add(panoramaMesh);
+    }
+
+    async function loadPhotoOrbit(frameList) {
+      initThree();
+      orbitFrames = frameList.filter(f => f?.url).slice(0, 80);
+      if (!orbitFrames.length) throw new Error('Need capture frames for look-around');
+      orbitTextures = new Array(orbitFrames.length);
+      orbitFrameIndex = -1;
+      if (photoPlane) {
+        scene.remove(photoPlane);
+        photoPlane.geometry.dispose();
+        photoPlane.material.dispose();
+        photoPlane = null;
+      }
+      photoPlane = new THREE.Mesh(
+        new THREE.PlaneGeometry(1, 1),
+        new THREE.MeshBasicMaterial({ toneMapped: false, depthTest: false, depthWrite: false }),
+      );
+      photoPlane.renderOrder = 1;
+      scene.add(photoPlane);
       panoramaReady = true;
       pathProgress = 0;
+      camera.position.set(cloudCenter.x, eyeHeight, cloudCenter.z);
+      await showOrbitFrame(0);
       setCameraOnPath(0, true);
       return true;
+    }
+
+    // Kept for API compatibility — always prefer immersive photo orbit over strip panoramas.
+    async function loadPanoramaScene(_url) {
+      if (frames.length) return loadPhotoOrbit(frames);
+      throw new Error('No capture frames');
     }
 
     async function loadFallbackPhotoCylinder(frameList) {
-      // If panorama export missing, stitch client-side into one canvas then wrap cylinder
-      initThree();
-      const usable = frameList.filter(f => f?.url).slice(0, 48);
-      if (usable.length < 2) throw new Error('Need frames for 3D twin');
-      const tileW = 320, tileH = 180;
-      const canvas = document.createElement('canvas');
-      canvas.width = tileW * usable.length;
-      canvas.height = tileH;
-      const ctx = canvas.getContext('2d');
-      ctx.fillStyle = '#0a100e';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      await Promise.all(usable.map((frame, i) => new Promise((resolve) => {
-        const img = new Image();
-        img.crossOrigin = 'anonymous';
-        img.onload = () => {
-          const scale = Math.min(tileW / img.width, tileH / img.height);
-          const dw = img.width * scale, dh = img.height * scale;
-          ctx.drawImage(img, i * tileW + (tileW - dw) / 2, (tileH - dh) / 2, dw, dh);
-          // Soft blend seam into next tile
-          if (i > 0) {
-            const g = ctx.createLinearGradient(i * tileW - 18, 0, i * tileW + 18, 0);
-            // redraw overlap edge softly by reducing alpha strip (approximate)
-            ctx.save();
-            ctx.globalAlpha = 0.35;
-            ctx.drawImage(img, i * tileW - 12, (tileH - dh) / 2, dw * 0.08, dh);
-            ctx.restore();
-          }
-          resolve();
-        };
-        img.onerror = () => resolve();
-        img.src = frame.url;
-      })));
-      const tex = new THREE.CanvasTexture(canvas);
-      if (THREE.SRGBColorSpace) tex.colorSpace = THREE.SRGBColorSpace;
-      tex.minFilter = THREE.LinearFilter;
-      tex.magFilter = THREE.LinearFilter;
-      tex.generateMipmaps = false;
-      const radius = 3.2;
-      const height = 2.35;
-      const geo = new THREE.CylinderGeometry(radius, radius, height, 96, 1, true);
-      geo.scale(-1, 1, 1);
-      if (panoramaMesh) {
-        scene.remove(panoramaMesh);
-        panoramaMesh.geometry.dispose();
-        panoramaMesh.material.map?.dispose?.();
-        panoramaMesh.material.dispose();
-      }
-      panoramaMesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ map: tex, toneMapped: false }));
-      panoramaMesh.position.copy(cloudCenter);
-      panoramaMesh.position.y = eyeHeight;
-      scene.add(panoramaMesh);
-      panoramaReady = true;
-      pathProgress = 0;
-      setCameraOnPath(0, true);
-      return true;
+      return loadPhotoOrbit(frameList);
     }
 
     function moveLocal(forward, strafe, up, dt, spd) {
-      // In panoramic twin: forward/back rotate around the room; strafe nudges look
-      const turn = (strafe + forward * 0.35) * 1.35 * spd * dt;
-      yaw -= turn;
-      pitch -= up * 0.9 * spd * dt;
-      pathProgress = ((yaw / (Math.PI * 2)) % 1 + 1) % 1;
+      // Drag / WASD steps through capture photos and slight pitch
+      const step = (forward + strafe * 0.25) * 0.55 * spd * dt;
+      pathProgress = Math.max(0, Math.min(1, pathProgress + step));
+      yaw = pathProgress * Math.PI * 2;
+      pitch -= up * 0.7 * spd * dt;
       applyLook();
+      updateOrbitFrameFromProgress(pathProgress);
     }
 
     function progress() {
@@ -424,7 +427,7 @@
       autoPlayBtn.textContent = autoPlay ? 'Pause' : 'Auto-play';
       mode3dBtn.classList.toggle('active', mode === '3d');
       modeVideoBtn.classList.toggle('active', mode === 'video' || mode === 'frames');
-      modeChip.textContent = mode === '3d' ? '3D explore' : (mode === 'video' ? 'Walk video' : 'Frame walk');
+      modeChip.textContent = mode === '3d' ? 'Look around' : (mode === 'video' ? 'Play capture' : 'Frame walk');
     }
 
     function stopAutoPlay() {
@@ -463,13 +466,13 @@
       viewport.style.display = is3d ? 'none' : 'grid';
       overlaysEl.style.opacity = is3d ? '0.35' : '1';
       if (is3d) {
-        hintEl.textContent = 'Drag to look around · WASD turn · Auto-play tours the panoramic twin';
-        modeHint.textContent = 'Continuous panoramic twin from the lab walk. Photoreal free-roam 3DGS needs CUDA + Nerfstudio.';
+        hintEl.textContent = 'Drag to step through full photos · WASD · Auto-play tours the capture';
+        modeHint.textContent = 'Each turn shows a full capture frame from the walk-through — not a strip panorama.';
         onResize3d();
         setCameraOnPath(pathProgress);
       } else {
-        hintEl.textContent = 'Auto-play or scroll/W·S · Drag to look · Indicators poll your API';
-        modeHint.textContent = 'Video / frame walk-through along the capture path.';
+        hintEl.textContent = 'Auto-play the walk-through · scroll / W·S to step · drag to pan';
+        modeHint.textContent = 'Play the stitched walk-through video of this Digital Capture.';
       }
       syncUi();
       renderOverlays();
@@ -580,10 +583,12 @@
       const dy = e.clientY - lastY;
       lastX = e.clientX; lastY = e.clientY;
       if (mode === '3d' && lookDragging) {
-        yaw -= dx * 0.005;
-        pitch -= dy * 0.004;
-        pathProgress = ((yaw / (Math.PI * 2)) % 1 + 1) % 1;
+        // Horizontal drag steps through full capture photos (not strip tiles)
+        pathProgress = Math.max(0, Math.min(1, pathProgress - dx * 0.0018));
+        yaw = pathProgress * Math.PI * 2;
+        pitch -= dy * 0.0035;
         applyLook();
+        updateOrbitFrameFromProgress(pathProgress);
         syncUi();
         return;
       }
@@ -696,6 +701,7 @@
           moved = true;
           if (pathProgress >= 0.999) stopAutoPlay();
         }
+        layoutPhotoPlane();
         renderer.render(scene, camera);
       } else {
         if (autoPlay) {
@@ -739,31 +745,45 @@
       frames = await fetch(`/api/twins/${encodeURIComponent(twinId)}/frames`).then(r => r.json()).catch(() => []);
       if (frames.length) still.src = frames[0].url;
 
-      const panoramaUrl = twin.viewer?.panorama_url || `/api/twins/${encodeURIComponent(twinId)}/exports/panorama.jpg`;
-      let twin3d = false;
-      try {
-        const probe = await fetch(panoramaUrl, { method: 'GET', headers: { Range: 'bytes=0-1' } }).catch(() => null);
-        const hasPano = Boolean(probe && (probe.ok || probe.status === 206));
-        if (hasPano) {
-          twin3d = await loadPanoramaScene(panoramaUrl);
-        } else if (frames.length) {
-          twin3d = await loadFallbackPhotoCylinder(frames);
+      const dl = document.getElementById('downloadMp4Link');
+      if (dl) {
+        const mp4 = twin.download_mp4_url || `/api/twins/${encodeURIComponent(twinId)}/download/mp4`;
+        dl.href = mp4;
+        dl.download = `${twinId}-capture.mp4`;
+      }
+      const processed = twin.processed || {};
+      const processedInfo = document.getElementById('processedInfo');
+      const processedLinks = document.getElementById('processedLinks');
+      if (processed.has_processed) {
+        if (processedInfo) {
+          processedInfo.textContent = `Processed ${processed.kind || twin.processed_kind || 'asset'} ready${processed.uploaded_at ? ` · ${processed.uploaded_at}` : ''}`;
         }
-        if (twin3d) metaEl.textContent = `${twin.frame_count || frames.length} frames · panoramic twin`;
-      } catch (err) {
-        console.warn('3D panorama failed', err);
-        if (frames.length) {
-          try {
-            twin3d = await loadFallbackPhotoCylinder(frames);
-            metaEl.textContent = `${frames.length} frames · panoramic twin`;
-          } catch (err2) {
-            console.warn(err2);
-          }
+        if (processedLinks) {
+          processedLinks.style.display = 'flex';
+          processedLinks.innerHTML = [
+            processed.video_url ? `<a class="primary" href="${processed.video_url}" target="_blank" rel="noopener">Show processed MP4</a>` : '',
+            processed.ply_url ? `<a href="${processed.ply_url}?download=1" download>Download PLY</a>` : '',
+            processed.splat_url ? `<a href="${processed.splat_url}?download=1" download>Download SPLAT</a>` : '',
+            processed.zip_url ? `<a href="${processed.zip_url}?download=1" download>Download ZIP</a>` : '',
+          ].filter(Boolean).join('');
         }
       }
 
-      const videoUrl = twin.viewer?.video_url || `/api/twins/${encodeURIComponent(twinId)}/exports/walkthrough.mp4`;
-      let hasVideo = Boolean(twin.viewer?.video_url);
+      let lookAroundReady = false;
+      if (frames.length) {
+        try {
+          lookAroundReady = await loadPhotoOrbit(frames);
+          metaEl.textContent = `${twin.frame_count || frames.length} frames · digital capture`;
+        } catch (err) {
+          console.warn('Look-around failed', err);
+        }
+      }
+
+      const processedVideoUrl = twin.processed?.video_url || twin.viewer?.processed_video_url || "";
+      const videoUrl = processedVideoUrl
+        || twin.viewer?.video_url
+        || `/api/twins/${encodeURIComponent(twinId)}/exports/walkthrough.mp4`;
+      let hasVideo = Boolean(processedVideoUrl || twin.viewer?.video_url);
       if (!hasVideo) {
         const probe = await fetch(videoUrl, { method: 'GET', headers: { Range: 'bytes=0-1' } }).catch(() => null);
         hasVideo = Boolean(probe && (probe.ok || probe.status === 206));
@@ -785,17 +805,23 @@
         }
       }
 
-      if (twin3d) {
-        setViewMode('3d');
-        noteEl.textContent = 'Continuous panoramic twin ready. Drag to look · Auto-play to tour. True photoreal 3DGS needs a CUDA GPU + Nerfstudio.';
-      } else if (hasVideo) {
+      // Prefer processed offline twin video when present, else walk-through capture.
+      if (hasVideo) {
         setViewMode('video');
-        noteEl.textContent = 'Walk video ready. Press Auto-play (normal speed).';
+        noteEl.textContent = processedVideoUrl
+          ? 'Processed digital twin video uploaded. Press Auto-play to review the offline result.'
+          : 'Digital Capture ready. Press Auto-play to watch the walk-through, or Download MP4 offline and upload the processed twin.';
+        if (processedVideoUrl) {
+          metaEl.textContent = `${twin.frame_count || frames.length || 0} frames · processed twin`;
+        }
+      } else if (lookAroundReady) {
+        setViewMode('3d');
+        noteEl.textContent = 'Look around ready — drag to step through full capture photos from the walk.';
       } else if (frames.length) {
         setViewMode('frames');
         noteEl.textContent = 'Frame walkthrough ready. Press Auto-play or walk manually.';
       } else {
-        noteEl.textContent = 'No twin media found yet.';
+        noteEl.textContent = 'No digital capture media found yet.';
       }
 
       renderOverlays();

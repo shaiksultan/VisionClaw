@@ -325,7 +325,7 @@ function addFooter(slide, n) {
     ["Autonomous Tests", "Mobile PS / lab cycles"],
     ["Evidence Tickets", "Screenshot & video proof"],
     ["Expert Engineer", "Live remote support call"],
-    ["ab-twin", "Digital twin from walk-through"],
+    ["ab-twin", "Digital Capture from walk-through"],
     ["Mission Control", "Lab manager & router"],
   ];
   agents.forEach((a, i) => {

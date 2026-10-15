@@ -1,8 +1,11 @@
 package com.meta.wearable.dat.externalsampleapps.cameraaccess.webrtc
 
+import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
+import android.media.AudioDeviceInfo
 import android.media.AudioManager
+import android.media.MediaRecorder
 import android.util.Log
 import org.webrtc.AudioSource
 import org.webrtc.AudioTrack
@@ -60,20 +63,24 @@ class WebRTCClient(private val context: Context) {
     private var audioDeviceModule: JavaAudioDeviceModule? = null
     private var customCapturer: CustomVideoCapturer? = null
     private var previousAudioMode: Int = AudioManager.MODE_NORMAL
-    private var previousSpeakerphone: Boolean = false
 
     val eglBase: EglBase = EglBase.create()
 
+    @SuppressLint("MissingPermission")
     fun setup(iceServers: List<PeerConnection.IceServer>?) {
         ensureFactoryInitialized(context)
         configureAudioForCall(true)
 
         val encoderFactory = DefaultVideoEncoderFactory(eglBase.eglBaseContext, true, true)
         val decoderFactory = DefaultVideoDecoderFactory(eglBase.eglBaseContext)
-        val adm = JavaAudioDeviceModule.builder(context.applicationContext)
+        // Use the phone built-in mic. Ray-Ban SCO mic is owned by Meta while camera
+        // streams — MODE_IN_COMMUNICATION / SCO routing silences WebRTC capture.
+        val admBuilder = JavaAudioDeviceModule.builder(context.applicationContext)
+            .setAudioSource(MediaRecorder.AudioSource.MIC)
             .setUseHardwareAcousticEchoCanceler(true)
             .setUseHardwareNoiseSuppressor(true)
-            .createAudioDeviceModule()
+        val adm = admBuilder.createAudioDeviceModule()
+        preferBuiltinMic(adm)
         audioDeviceModule = adm
 
         peerConnectionFactory = PeerConnectionFactory.builder()
@@ -81,8 +88,6 @@ class WebRTCClient(private val context: Context) {
             .setVideoEncoderFactory(encoderFactory)
             .setVideoDecoderFactory(decoderFactory)
             .createPeerConnectionFactory()
-        // Factory holds the ADM reference; release our builder handle.
-        adm.release()
 
         val rtcConfig = PeerConnection.RTCConfiguration(
             iceServers ?: listOf(
@@ -256,9 +261,26 @@ class WebRTCClient(private val context: Context) {
         peerConnection = null
         peerConnectionFactory?.dispose()
         peerConnectionFactory = null
+        runCatching { audioDeviceModule?.release() }
         audioDeviceModule = null
         configureAudioForCall(false)
         Log.d(TAG, "Peer connection closed")
+    }
+
+    private fun preferBuiltinMic(adm: JavaAudioDeviceModule) {
+        val am = context.getSystemService(Context.AUDIO_SERVICE) as? AudioManager ?: return
+        val builtin = am.getDevices(AudioManager.GET_DEVICES_INPUTS)
+            .firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_MIC }
+            ?: return
+        runCatching {
+            val method = adm.javaClass.methods.firstOrNull {
+                it.name == "setPreferredInputDevice" && it.parameterTypes.size == 1
+            }
+            method?.invoke(adm, builtin)
+            Log.i(TAG, "Preferred WebRTC input: ${builtin.productName}")
+        }.onFailure {
+            Log.d(TAG, "setPreferredInputDevice unavailable: ${it.message}")
+        }
     }
 
     private fun configureAudioForCall(active: Boolean) {
@@ -266,12 +288,13 @@ class WebRTCClient(private val context: Context) {
         try {
             if (active) {
                 previousAudioMode = am.mode
-                previousSpeakerphone = am.isSpeakerphoneOn
-                am.mode = AudioManager.MODE_IN_COMMUNICATION
-                am.isSpeakerphoneOn = true
+                // Stay in MODE_NORMAL. MODE_IN_COMMUNICATION activates Ray-Ban SCO
+                // while glasses camera streams; Meta owns that route and Android
+                // silences our WebRTC/phone mic capture (same as Gemini AudioManager).
+                am.mode = AudioManager.MODE_NORMAL
+                runCatching { am.clearCommunicationDevice() }
             } else {
                 am.mode = previousAudioMode
-                am.isSpeakerphoneOn = previousSpeakerphone
             }
         } catch (e: Exception) {
             Log.w(TAG, "AudioManager configure failed: ${e.message}")

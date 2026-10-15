@@ -189,6 +189,8 @@ function bindLogs() {
 }
 
 let demos = [], inventory = [], knowledge = [], tests = [], tickets = [], supportCalls = [], twins = [], taskBoard = null, currentView = "chat";
+let ticketFilter = "all"; // all | remote_support | evidence
+let supportShowAllTickets = false;
 let platformConfig = { webrtc_viewer_url: "/support-viewer.html", webrtc_signal_url: "wss://visionclaw-signaling.fly.dev" };
 let activeSupportId = null;
 let supportPollTimer = null;
@@ -213,7 +215,7 @@ const AGENT_CHAT_VIEWS = new Set([
 
 const TOOL_SESSIONS = [
   { id: "chat", title: "Mission Control (Lab Manager)", preview: "Lab manager chat · local lab DB", initials: "LM", tone: 3 },
-  { id: "overview", title: "AI Glasses", preview: "Know, See and Act through Mission Control", initials: "AI", tone: 0 },
+  { id: "overview", title: "AI Glasses", preview: "UAELAB AI Assistant · agent roster", initials: "AI", tone: 0 },
   { id: "dashboard", title: "Dashboard", preview: "Queue depth and agent execution", initials: "DB", tone: 3 },
   { id: "agents", title: "Agents", preview: "All demo agents and routing", initials: "AG", tone: 2 },
   { id: "logs", title: "Agent Runtime", preview: "Live command routing and failures", initials: "RT", tone: 4 },
@@ -222,7 +224,7 @@ const TOOL_SESSIONS = [
 
 const VIEW_META = {
   chat: { title: "Mission Control (Lab Manager)", subtitle: "Lab manager · tickets, agents, and local lab database" },
-  overview: { title: "AI Glasses", subtitle: "Know, See and Act through Lab AI Mission Control" },
+  overview: { title: "AI Glasses", subtitle: "UAELAB AI Assistant · lab agents" },
   dashboard: { title: "Dashboard", subtitle: "Agents executing and completed tasks" },
   kanban: { title: "Kanban", subtitle: "In progress execution and completed tasks" },
   agents: { title: "Agents", subtitle: "Open any agent workflow from the list" },
@@ -230,7 +232,7 @@ const VIEW_META = {
   knowledge: { title: "Lab Knowledge Assistant", subtitle: "Procedures, validation, and documentation" },
   tests: { title: "Run Test", subtitle: "Start and monitor lab validation tests" },
   "mobile-ps": { title: "Mobile PS Agent", subtitle: "Dual-UE packet core upgrade validation" },
-  "ab-twin": { title: "ab-twin", subtitle: "Digital twin generator from walk-through video" },
+  "ab-twin": { title: "Digital Capture", subtitle: "Walk-through capture · Gaussian splatting" },
   logs: { title: "Agent Runtime", subtitle: "Live command routing and device connections" },
   tickets: { title: "Evidence Ticket Agent", subtitle: "Tracked tickets with screenshot or video proof" },
   support: { title: "Expert Engineer Agent", subtitle: "Live expert engineer video from AI glasses" },
@@ -276,7 +278,7 @@ function sessionTimeLabel() {
 function demoSessions() {
   return demos.map((d, i) => ({
     id: d.id,
-    title: d.name.replace(/\s+Agent$/, "").replace(/^ab-twin — /, ""),
+    title: d.name.replace(/\s+Agent$/, "").replace(/^ab-twin\s*[—–-]?\s*/i, ""),
     preview: d.example || d.description || "",
     initials: initialsFrom(d.label || d.name),
     tone: (i + 1) % 7,
@@ -428,7 +430,7 @@ function boardCol(id) {
 }
 
 function kindLabel(kind) {
-  return ({ support: "Support", test: "Test", ticket: "Ticket", twin: "Twin" })[kind] || kind || "Task";
+  return ({ support: "Support", test: "Test", ticket: "Ticket", twin: "Capture" })[kind] || kind || "Task";
 }
 
 function agentTypeLabel(item) {
@@ -436,7 +438,7 @@ function agentTypeLabel(item) {
     "expert-engineer-agent": "Expert Engineer Agent",
     "evidence-ticket-agent": "Evidence Ticket Agent",
     "lab-test-agent": "Lab Test Agent",
-    "ab-twin-agent": "ab-twin Agent",
+    "ab-twin-agent": "Digital Capture Agent",
     "lab-inventory-agent": "Lab Inventory Agent",
     "lab-knowledge-agent": "Lab Knowledge Assistant",
   };
@@ -521,11 +523,19 @@ function chatView() {
 }
 
 function formatChatHtml(text) {
-  let html = esc(String(text || "").replace(/\n{3,}/g, "\n\n").trim()).replace(/\n/g, "<br>");
+  const raw = String(text || "").replace(/\n{3,}/g, "\n\n").trim();
+  // Escape first, keep newlines as <br>, then upgrade markdown pipe-tables to smart components.
+  let html = esc(raw).replace(/\n/g, "<br>");
   html = html.replace(
-    /(\/api\/reports\/[\w.%+-]+\.pptx)/gi,
+    /(\/api\/reports\/[\w.%+-]+\.(?:pptx|csv))/gi,
     '<a class="chat-dl-link" href="$1" download target="_blank" rel="noopener">$1</a>',
   );
+  // Light markdown: headings / bold (after escape; newlines are already <br>)
+  html = html.replace(/(^|<br>)###\s+(.+?)(?=<br>|$)/g, "$1<strong class=\"msg-h\">$2</strong>");
+  html = html.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>");
+  if (window.MissionCharts?.renderMarkdownTablesInHtml) {
+    html = window.MissionCharts.renderMarkdownTablesInHtml(html);
+  }
   return html;
 }
 
@@ -534,21 +544,39 @@ function liveChatMarkup(view = currentView, opts = {}) {
   const label = assistantChatLabel(view);
   const initials = initialsFrom(label);
   let lastAssistant = "";
+  const chartsLib = window.MissionCharts;
   const body = messages.length
     ? messages.map(m => {
       const role = m.role === "user" ? "user" : "assistant";
       const who = role === "user" ? "You" : (m.agent_name || label);
       const dl = m.download_url || (String(m.content || "").match(/\/api\/reports\/[\w.%+-]+\.pptx/i) || [])[0] || "";
+      const excel = m.excel_url || (String(m.content || "").match(/\/api\/reports\/[\w.%+-]+\.csv/i) || [])[0] || "";
+      const charts = Array.isArray(m.charts) ? m.charts : [];
+      const tables = Array.isArray(m.tables) ? m.tables : [];
+      const hasGenui = charts.length > 0 || tables.length > 0;
       const showAvatar = role === "assistant" && who !== lastAssistant;
       if (role === "assistant") lastAssistant = who;
       else lastAssistant = "";
+      const exportHtml = chartsLib
+        ? chartsLib.analyticsExportsHtml({ download_url: dl, excel_url: excel })
+        : `${dl ? `<p class="msg-download"><a class="chat-dl-btn" href="${attr(dl)}" download>Download PPTX</a></p>` : ""}${excel ? `<p class="msg-download"><a class="chat-dl-btn" href="${attr(excel)}" download>Download Excel CSV</a></p>` : ""}`;
+      const chartsHtml = chartsLib && charts.length ? chartsLib.chartsMarkup(charts) : "";
+      const tablesHtml = chartsLib && tables.length ? chartsLib.tablesMarkup(tables) : "";
+      // When we already have a structured smart table, strip leftover markdown pipe tables from text.
+      let content = m.content || "";
+      if (tables.length) {
+        content = content.replace(/(^|\n)\s*\|.+\|(\n\s*\|?\s*:?-{3,}.*)?(\n\s*\|.+\|)*/g, "").trim()
+          || `Smart table ready (${tables[0].rows?.length || 0} rows).`;
+      }
       return `<div class="msg-row ${role}">
         ${role === "assistant" ? `<div class="msg-avatar-col">${showAvatar ? `<span class="msg-avatar" aria-hidden="true">${esc(initialsFrom(who) || initials)}</span>` : ""}</div>` : ""}
         <div class="msg-stack">
           ${role === "assistant" && showAvatar ? `<div class="msg-meta">${esc(who)}</div>` : ""}
-          <div class="msg-bubble ${role}">
-            <div class="msg-text">${formatChatHtml(m.content || "")}</div>
-            ${dl ? `<p class="msg-download"><a class="chat-dl-btn" href="${attr(dl)}" download>Download PPTX</a></p>` : ""}
+          <div class="msg-bubble ${role}${hasGenui ? " has-genui" : ""}">
+            <div class="msg-text">${formatChatHtml(content)}</div>
+            ${exportHtml}
+            ${tablesHtml}
+            ${chartsHtml}
           </div>
         </div>
       </div>`;
@@ -561,15 +589,16 @@ function liveChatMarkup(view = currentView, opts = {}) {
           <div class="msg-meta">${esc(label)}</div>
           <div class="msg-bubble assistant">
             <div class="msg-text">${view === "chat"
-              ? "Hi — I’m Lab Manager. Ask about tickets, inventory, or agents."
+              ? "Hi — I am UAELAB AI Assistant. Ask “how can you help” for the full agent list, or try a ticket table, bar chart, or inventory lookup."
               : `Hi — I’m ${esc(label)}. Ask about this workflow.`}</div>
           </div>
         </div>
       </div>
       ${opts.hints ? `<div class="chat-hint-row">
+        <button type="button" class="chat-chip chat-hint" data-hint="nice table of today's tickets">Nice table</button>
         <button type="button" class="chat-chip chat-hint" data-hint="list tickets">Tickets</button>
-        <button type="button" class="chat-chip chat-hint" data-hint="open inventory">Inventory</button>
-        <button type="button" class="chat-chip chat-hint" data-hint="tell me about recent evidence tickets">Evidence</button>
+        <button type="button" class="chat-chip chat-hint" data-hint="bar chart of open vs closed tickets">Ticket chart</button>
+        <button type="button" class="chat-chip chat-hint" data-hint="pie chart of inventory by status">Inventory chart</button>
         <button type="button" class="chat-chip chat-hint" data-hint="create pptx of all tickets">Export PPTX</button>
       </div>` : ""}
     </div>`
@@ -585,6 +614,20 @@ function liveChatMarkup(view = currentView, opts = {}) {
       </div>`
     : "";
   return `<div class="live-chat${view !== "chat" ? " agent-live-chat" : ""}" id="liveChatThread" data-agent="${attr(view)}">${body}${thinking}</div>`;
+}
+
+function hydrateChatCharts() {
+  const thread = document.getElementById("liveChatThread");
+  if (!thread || !window.MissionCharts) return;
+  window.MissionCharts.destroyChatCharts();
+  const view = (currentView === "chat" || AGENT_CHAT_VIEWS.has(currentView)) ? currentView : "chat";
+  const messages = getChatMessages(view);
+  const chartMessages = messages.filter(m => m.role !== "user" && Array.isArray(m.charts) && m.charts.length);
+  const stacks = thread.querySelectorAll(".msg-bubble.has-genui");
+  chartMessages.forEach((msg, i) => {
+    if (stacks[i]) window.MissionCharts.attachChartPayloads(stacks[i], msg.charts);
+  });
+  window.MissionCharts.mountChatCharts(thread);
 }
 
 function withAgentChat(innerHtml) {
@@ -608,23 +651,14 @@ function overviewView() {
   </article>`).join("");
   return `<div class="chat-thread">
     <p class="chat-system">Mission Control session · AI Glasses</p>
-    <article class="computer-card">
+    <article class="computer-card glasses-hero-card">
       <div class="computer-head">
-        <strong>Computer</strong>
-        <span class="control-badge">You're in control</span>
+        <strong>AI Glasses</strong>
+        <span class="control-badge">UAELAB AI Assistant</span>
       </div>
-      <p>${esc(support?.example || "Call the Expert Engineer Agent — I need help on this MME alarm screen.")}</p>
-      <div class="computer-media" aria-hidden="true">
-        <div class="computer-window">
-          <div class="computer-window-bar"></div>
-          <div class="computer-window-body">
-            <div class="computer-avatar-ph"></div>
-            <div class="computer-field"></div>
-            <div class="computer-field"></div>
-            <button type="button" class="computer-btn" tabindex="-1">Open agent</button>
-          </div>
-        </div>
-        <div class="computer-dock">◎</div>
+      <p>${esc(support?.example || "Call the Lab Expert Engineer — I need help on this MME alarm screen.")}</p>
+      <div class="glasses-hero-media">
+        <img src="/ai-glasses-hero.jpg" alt="UAELAB AI vision glasses" width="960" height="540" loading="lazy">
       </div>
     </article>
     <p class="chat-system">Available agents</p>
@@ -736,6 +770,9 @@ function mobilePsView() {
 
 function twinCard(t) {
   const ready = String(t.status || "").toUpperCase() === "READY";
+  const processed = t.processed || {};
+  const hasProcessed = Boolean(processed.has_processed || t.processed_file || processed.video_url || processed.splat_url || processed.ply_url);
+  const mp4Url = t.download_mp4_url || (ready ? `/api/twins/${t.twin_id}/download/mp4` : "");
   return `<article class="article-card twin-card">
     <div>
       <h3>${esc(t.twin_id)}</h3>
@@ -744,10 +781,21 @@ function twinCard(t) {
         <span class="chip ${ready ? "ok" : "warn"}">${esc(t.status || "…")}</span>
         <span class="chip">${esc(t.engine || "")}</span>
         <span class="chip">${t.frame_count != null ? `${t.frame_count} frames` : ""}</span>
+        ${hasProcessed ? `<span class="chip ok">processed twin</span>` : ""}
       </div>
+      ${hasProcessed ? `<p class="muted twin-processed-links">Processed:
+        ${processed.video_url ? `<a href="${attr(processed.video_url)}" target="_blank" rel="noopener">MP4</a>` : ""}
+        ${processed.ply_url ? `<a href="${attr(processed.ply_url)}?download=1" download>PLY</a>` : ""}
+        ${processed.splat_url ? `<a href="${attr(processed.splat_url)}?download=1" download>SPLAT</a>` : ""}
+        ${processed.zip_url ? `<a href="${attr(processed.zip_url)}?download=1" download>ZIP</a>` : ""}
+      </p>` : ""}
     </div>
-    <div class="log-actions">
-      ${ready ? `<a class="primary compact" href="${attr(t.viewer_url || `/twin-viewer.html?id=${t.twin_id}`)}" target="_blank" rel="noopener">Open viewer</a>` : ""}
+    <div class="log-actions twin-actions">
+      ${ready ? `<a class="primary compact" href="${attr(t.viewer_url || `/twin-viewer.html?id=${t.twin_id}`)}" target="_blank" rel="noopener">Open capture</a>` : ""}
+      ${mp4Url ? `<a class="secondary compact" href="${attr(mp4Url)}" download>Download MP4</a>` : ""}
+      ${ready ? `<label class="secondary compact">Upload processed<input type="file" class="twin-processed-file" data-id="${attr(t.twin_id)}" accept=".mp4,.ply,.splat,.ksplat,.glb,.zip,video/mp4,application/zip" hidden></label>` : ""}
+      ${hasProcessed && processed.video_url ? `<a class="primary compact" href="${attr(processed.video_url)}" target="_blank" rel="noopener">Show processed</a>` : ""}
+      ${hasProcessed && !processed.video_url ? `<a class="primary compact" href="${attr(t.viewer_url || `/twin-viewer.html?id=${t.twin_id}`)}" target="_blank" rel="noopener">Show processed</a>` : ""}
       <button class="secondary compact twin-refresh" data-id="${attr(t.twin_id)}">Status</button>
     </div>
   </article>`;
@@ -755,22 +803,42 @@ function twinCard(t) {
 
 function abTwinView() {
   const demo = demos.find(d => d.id === "ab-twin");
-  return withAgentChat(`${agentPageHead(demo, { actions: '<label class="primary compact">＋ Capture / upload walk-through<input type="file" id="twinVideoFile" accept="video/mp4,video/webm,video/quicktime" hidden></label>' })}
-    <section class="demo-banner"><strong>Voice / prompt:</strong> "${esc(demo?.example || "Create digital twin — capture the lab walk-through video and build the twin.")}"
-    <br><strong>Flow:</strong> Ray-Ban Gen 2 3K walk-through → upload → extract frames → 3DGS engine (demo preview or Nerfstudio) → browser viewer.
-    <br><strong>Engine:</strong> <code>TWIN_ENGINE=demo|nerfstudio|longsplat</code> (default demo until GPU tools installed).</section>
-    <section class="toolbar"><div class="count"><strong id="twinsCount">${twins.length}</strong> twins</div>
+  return withAgentChat(`${agentPageHead(demo, { title: "Digital Capture", actions: '<label class="primary compact">＋ Capture / upload walk-through<input type="file" id="twinVideoFile" accept="video/mp4,video/webm,video/quicktime" hidden></label>' })}
+    <section class="demo-banner"><strong>Voice / prompt:</strong> "${esc(demo?.example || "Create digital capture — record the lab walk-through and build the capture.")}"
+    <br><strong>Offline Gaussian splatting:</strong> Download MP4 → rebuild with Gaussian splatting offline → <em>Upload processed</em> (PLY / SPLAT / MP4 / ZIP) → open <strong>Show processed</strong>.
+    <br><strong>Upload link pattern:</strong> <code>POST /api/twins/&lt;TWIN-ID&gt;/processed</code> · download <code>/api/twins/&lt;TWIN-ID&gt;/download/mp4</code></section>
+    <section class="toolbar"><div class="count"><strong id="twinsCount">${twins.length}</strong> captures</div>
       <button class="secondary compact" id="refreshTwins">Refresh</button></section>
-    <section class="article-list" id="twinsList">${twins.map(twinCard).join("") || '<p class="muted">No digital twins yet. Upload a walk-through video to create one.</p>'}</section>`);
+    <section class="article-list" id="twinsList">${twins.map(twinCard).join("") || '<p class="muted">No digital captures yet. Upload a walk-through video to create one.</p>'}</section>`);
+}
+
+function isRemoteSupportTicket(ticket) {
+  return (ticket.ticket_type || "") === "remote_support" || Boolean(ticket.support_call_id);
+}
+
+function filteredTickets() {
+  if (ticketFilter === "remote_support") return tickets.filter(isRemoteSupportTicket);
+  if (ticketFilter === "evidence") return tickets.filter(t => !isRemoteSupportTicket(t));
+  return tickets;
 }
 
 function ticketsView() {
   const demo = demos.find(d => d.id === "tickets");
-  const openCount = tickets.filter(t => t.status === "open").length;
+  const shown = filteredTickets();
+  const openCount = shown.filter(t => t.status === "open").length;
+  const remoteCount = tickets.filter(isRemoteSupportTicket).length;
   return withAgentChat(`${agentPageHead(demo, { actions: '<button class="primary" id="createTicket">＋ Create ticket</button>' })}
-    <section class="demo-banner"><strong>Open evidence tickets stay open</strong> until you close them manually. Ending an Expert Engineer call creates a ticket here — it does not auto-close.</section>
-    <section class="toolbar"><label class="search">⌕ <input id="ticketSearch" placeholder="Search by code, title, or description" value=""></label><div class="count"><strong id="ticketsCount">${openCount}</strong> open · ${tickets.length} total</div></section>
-    <section class="test-list" id="ticketList">${tickets.map(ticketRow).join("") || '<p class="muted">No evidence tickets yet. Click <strong>Create ticket</strong> to add one from the web console.</p>'}</section>`);
+    <section class="demo-banner"><strong>Open evidence tickets stay open</strong> until you close them manually. Ending an Expert Engineer call creates a ticket here — it does not auto-close. Use <strong>Expert Engineer</strong> below to display all support tickets and read transcriptions.</section>
+    <section class="toolbar ticket-filter-bar">
+      <div class="ticket-filters" role="tablist">
+        <button type="button" class="chip-btn${ticketFilter === "all" ? " active" : ""}" data-ticket-filter="all">All (${tickets.length})</button>
+        <button type="button" class="chip-btn${ticketFilter === "remote_support" ? " active" : ""}" data-ticket-filter="remote_support">Expert Engineer (${remoteCount})</button>
+        <button type="button" class="chip-btn${ticketFilter === "evidence" ? " active" : ""}" data-ticket-filter="evidence">Evidence (${tickets.length - remoteCount})</button>
+      </div>
+      <label class="search">⌕ <input id="ticketSearch" placeholder="Search by code, title, transcription, or description" value=""></label>
+      <div class="count"><strong id="ticketsCount">${openCount}</strong> open · ${shown.length} shown</div>
+    </section>
+    <section class="test-list" id="ticketList">${shown.map(ticketRow).join("") || `<p class="muted">${ticketFilter === "remote_support" ? "No Expert Engineer support tickets yet. End a live call to create one with transcription." : "No evidence tickets yet. Click <strong>Create ticket</strong> to add one from the web console."}</p>`}</section>`);
 }
 
 
@@ -854,13 +922,17 @@ function ticketRow(ticket) {
   const code = ticket.ticket_code || ticket.ticket_number || `TKT-${ticket.id}`;
   const hasMedia = Boolean(ticket.image || ticket.video || ticket.preview_image || ticket.video_frames?.length);
   const canClose = ticket.status === "open";
+  const transcript = ticketTranscriptText(ticket);
+  const preview = (ticketDescriptionWithoutTranscript(ticket) || ticket.description || "").slice(0, 180);
+  const isRemote = (ticket.ticket_type || "") === "remote_support" || Boolean(ticket.support_call_id);
   return `<article class="test-card ticket-card" data-id="${ticket.id}">
     <div class="ticket-card-main">
-      <div><h3>${esc(code)} · ${esc(ticket.title || "Evidence ticket")}</h3><p>${esc(ticket.description)}</p>
-      <div class="chips"><span class="${statusClass}">${esc(ticket.status)}</span><span class="chip">${esc(ticketVideoLabel(ticket))}</span><span class="chip">${esc(deviceBadge(ticket.device))}</span></div></div>
+      <div><h3>${esc(code)} · ${esc(ticket.title || "Evidence ticket")}</h3><p>${esc(preview)}${preview.length >= 180 ? "…" : ""}</p>
+      <div class="chips"><span class="${statusClass}">${esc(ticket.status)}</span><span class="chip">${esc(ticketVideoLabel(ticket))}</span><span class="chip">${esc(deviceBadge(ticket.device))}</span>${isRemote ? `<span class="chip">remote support</span>` : ""}${transcript ? `<span class="chip ok">transcription</span>` : ""}</div></div>
       <div class="ticket-card-actions">
+        ${transcript ? `<button class="primary compact view-transcript" data-id="${ticket.id}">Read transcription</button>` : ""}
         <button class="secondary compact view-ticket" data-id="${ticket.id}">${hasMedia ? "Expand" : "Details"}</button>
-        ${canClose ? `<button class="primary compact close-ticket" data-id="${ticket.id}">Close ticket</button>` : ""}
+        ${canClose ? `<button class="secondary compact close-ticket" data-id="${ticket.id}">Close ticket</button>` : ""}
       </div>
     </div>
     ${hasMedia ? ticketEvidenceHtml(ticket, { compact: true }) : ""}
@@ -898,6 +970,29 @@ async function loadTickets(q = "") {
   }
 }
 
+async function uploadTwinProcessedFile(twinId, file) {
+  if (!twinId || !file) return;
+  if (file.size > 380 * 1024 * 1024) throw new Error("Processed file too large (max ~380MB)");
+  toast(`Uploading processed twin for ${twinId}…`);
+  const dataUrl = await readFileAsDataUrl(file);
+  const result = await api(`/api/twins/${twinId}/processed`, {
+    method: "POST",
+    body: JSON.stringify({
+      file: dataUrl,
+      filename: file.name,
+      label: `Offline real digital twin · ${file.name}`,
+    }),
+  });
+  await loadTwins();
+  render();
+  bindAbTwin();
+  const processed = result.processed || {};
+  const openUrl = processed.video_url || result.viewer_url || `/twin-viewer.html?id=${twinId}`;
+  toast(result.spoken_summary || "Processed twin uploaded");
+  window.open(openUrl, "_blank", "noopener");
+  return result;
+}
+
 function bindAbTwin() {
   const fileInput = $("#twinVideoFile");
   fileInput?.addEventListener("change", async () => {
@@ -910,14 +1005,14 @@ function bindAbTwin() {
       const job = await api("/api/twins", {
         method: "POST",
         body: JSON.stringify({
-          title: `Lab twin · ${file.name}`,
-          description: "Create digital twin from AI-glasses walk-through video",
+          title: `Lab capture · ${file.name}`,
+          description: "Create digital capture from AI-glasses walk-through video",
           video: dataUrl,
           device: "ray-ban",
           lab_name: "Telecom Lab",
         }),
       });
-      toast(`Twin ${job.twin_id} started`);
+      toast(`Capture ${job.twin_id} started`);
       await loadTwins();
       render();
       bindAbTwin();
@@ -929,7 +1024,7 @@ function bindAbTwin() {
           clearInterval(poll);
           render();
           bindAbTwin();
-          toast(current.status === "READY" ? "Digital twin ready" : (current.error || "Twin failed"));
+          toast(current.status === "READY" ? "Digital capture ready — download MP4 for offline real twin" : (current.error || "Capture failed"));
         } else if (currentView === "ab-twin") {
           render();
           bindAbTwin();
@@ -947,6 +1042,20 @@ function bindAbTwin() {
       toast(`${detail.twin_id}: ${detail.status} — ${detail.current_step || ""}`);
       await loadTwins(); render(); bindAbTwin();
     } catch (err) { toast(err.message); }
+  });
+  $$(".twin-processed-file").forEach(input => {
+    input.onchange = async () => {
+      const file = input.files?.[0];
+      const twinId = input.dataset.id;
+      if (!file || !twinId) return;
+      try {
+        await uploadTwinProcessedFile(twinId, file);
+      } catch (err) {
+        toast(err.message);
+      } finally {
+        input.value = "";
+      }
+    };
   });
 }
 
@@ -1029,6 +1138,13 @@ function bindTicketVideos(root = document) {
 
 function bindTickets() {
   $("#createTicket").onclick = () => openTicketDialog();
+  $$("[data-ticket-filter]").forEach(btn => {
+    btn.onclick = () => {
+      ticketFilter = btn.dataset.ticketFilter || "all";
+      render();
+      bindTickets();
+    };
+  });
   let timer;
   const search = $("#ticketSearch");
   if (search) {
@@ -1045,6 +1161,7 @@ function bindTickets() {
   }
   bindTicketVideos();
   $$(".view-ticket").forEach(btn => btn.onclick = e => { e.stopPropagation(); showTicket(Number(btn.dataset.id)); });
+  $$(".view-transcript").forEach(btn => btn.onclick = e => { e.stopPropagation(); showTicketTranscript(Number(btn.dataset.id)); });
   $$(".close-ticket").forEach(btn => btn.onclick = async e => {
     e.stopPropagation();
     const id = Number(btn.dataset.id);
@@ -1162,24 +1279,98 @@ function openTicketDialog() {
   });
 }
 
+function ticketTranscriptText(ticket) {
+  const direct = String(ticket?.transcript || "").trim();
+  if (direct) return direct;
+  const desc = String(ticket?.description || "");
+  for (const marker of ["## Call transcription\n", "Transcript:\n"]) {
+    const idx = desc.indexOf(marker);
+    if (idx >= 0) return desc.slice(idx + marker.length).trim();
+  }
+  return "";
+}
+
+function ticketDescriptionWithoutTranscript(ticket) {
+  const desc = String(ticket?.description || "");
+  for (const marker of ["\n## Call transcription\n", "\nTranscript:\n", "## Call transcription\n", "Transcript:\n"]) {
+    const idx = desc.indexOf(marker);
+    if (idx >= 0) return desc.slice(0, idx).trim();
+  }
+  return desc.trim();
+}
+
+function formatTranscriptForReading(raw) {
+  return String(raw || "")
+    .split("\n")
+    .map(line => line.trim())
+    .filter(Boolean)
+    .map(line => {
+      const match = line.match(/^\[([^\]]+)\]\s*(.*)$/);
+      if (!match) return line;
+      const sender = match[1].toLowerCase();
+      const label = sender === "expert" ? "Expert"
+        : sender === "field" ? "Field"
+        : sender === "system" ? "System"
+        : match[1];
+      return `${label}: ${match[2]}`;
+    })
+    .join("\n");
+}
+
+async function showTicketTranscript(id) {
+  try {
+    const ticket = await api(`/api/tickets/${id}`);
+    const code = ticket.ticket_code || ticket.ticket_number || `TKT-${ticket.id}`;
+    const transcript = ticketTranscriptText(ticket);
+    if (!transcript) {
+      toast("No transcription saved on this ticket yet");
+      return;
+    }
+    openModal(`${code} · Call transcription`, `
+      <p class="muted">Expert Engineer session transcription stored with this remote support ticket.</p>
+      <pre class="ticket-transcript ticket-transcript-full">${esc(formatTranscriptForReading(transcript))}</pre>
+      <div class="modal-actions">
+        <button type="button" class="secondary" id="openTicketFromTranscript">Open full ticket</button>
+        <button type="button" class="primary" data-close-modal>Close</button>
+      </div>
+    `, () => {
+      $("#openTicketFromTranscript")?.addEventListener("click", () => {
+        closeModal();
+        showTicket(ticket.id);
+      });
+    });
+  } catch (err) {
+    toast(err.message);
+  }
+}
+
 async function showTicket(id) {
   try {
-    let ticket = tickets.find(row => row.id === id);
-    if (!ticket?.image && !ticket?.video && !ticket?.video_frames?.length) ticket = await api(`/api/tickets/${id}`);
+    const ticket = await api(`/api/tickets/${id}`);
     const code = ticket.ticket_code || ticket.ticket_number || `TKT-${ticket.id}`;
+    const transcript = ticketTranscriptText(ticket);
+    const description = ticketDescriptionWithoutTranscript(ticket) || "Remote support evidence ticket";
     openModal(`${code} · ${ticket.title || "Evidence ticket"}`, `
       <div class="ticket-detail-meta">
         <div><strong>Status</strong> ${esc(ticket.status)} · ${esc(ticketVideoLabel(ticket))}</div>
         <div><strong>Device</strong> ${esc(deviceBadge(ticket.device))}</div>
-        <div><strong>Description</strong> ${esc(ticket.description)}</div>
+        <div><strong>Description</strong> ${esc(description)}</div>
       </div>
+      ${transcript ? `<div class="ticket-transcript-block">
+        <div class="ticket-transcript-head"><strong>Call transcription</strong><button type="button" class="secondary compact" id="expandTranscript">Open readable view</button></div>
+        <pre class="ticket-transcript">${esc(formatTranscriptForReading(transcript))}</pre>
+      </div>` : `<p class="muted">No call transcription stored on this ticket.</p>`}
       ${ticketEvidenceHtml(ticket)}
       <div class="modal-actions">
+        ${transcript ? `<button type="button" class="secondary" id="modalReadTranscript">Read transcription</button>` : ""}
         ${ticket.status === "open" ? `<button type="button" class="primary" id="modalCloseTicket">Close ticket</button>` : ""}
         <button type="button" class="secondary" data-close-modal>Dismiss</button>
       </div>
     `, () => {
       bindTicketVideos($("#modalBody"));
+      const openReadable = () => showTicketTranscript(ticket.id);
+      $("#expandTranscript")?.addEventListener("click", openReadable);
+      $("#modalReadTranscript")?.addEventListener("click", openReadable);
       $("#modalCloseTicket")?.addEventListener("click", async () => {
         try {
           await api(`/api/tickets/${ticket.id}`, { method: "PATCH", body: JSON.stringify({ status: "closed" }) });
@@ -1207,21 +1398,50 @@ function supportViewerUrl(roomCode) {
     url.searchParams.set("room", roomCode);
     url.searchParams.set("autojoin", "1");
     url.searchParams.set("signal", signal);
-    url.searchParams.set("v", "4");
+    url.searchParams.set("v", "5");
     return url.toString();
   }
-  return `${base}?room=${encodeURIComponent(roomCode)}&autojoin=1&signal=${encodeURIComponent(signal)}&v=4`;
+  return `${base}?room=${encodeURIComponent(roomCode)}&autojoin=1&signal=${encodeURIComponent(signal)}&v=5`;
 }
 
 function supportCallCard(call) {
   const active = call.id === activeSupportId ? " active" : "";
   const ringing = call.id === ringingCallId ? " ringing" : "";
   const phase = call.call_phase || call.status;
-  return `<article class="support-call-card${active}${ringing}" data-id="${call.id}">
+  const ended = call.status === "ended" || phase === "ended";
+  const ticketId = call.ticket_id || call.ticket?.id || "";
+  return `<article class="support-call-card${active}${ringing}${ended ? " ended" : ""}" data-id="${call.id}">
     <div><strong>${esc(call.call_code)}</strong> · ${esc(phase)}</div>
     <p class="muted">${esc(call.description || "Expert engineer request")}</p>
-    <div class="chips"><span class="chip">${esc(deviceBadge(call.device))}</span>${phase === "waiting" ? `<span class="chip warn">Incoming</span>` : `<span class="chip ok">${esc(phase)}</span>`}${call.expert_label ? `<span class="chip">${esc(call.expert_label)}</span>` : ""}</div>
-    ${call.status !== "ended" ? `<button class="primary compact accept-support" data-id="${call.id}">${phase === "live" ? "Open session" : "Answer call"}</button>` : `<span class="muted">Ticket ${esc(call.ticket_code || "saved")}</span>`}
+    <div class="chips"><span class="chip">${esc(deviceBadge(call.device))}</span>${phase === "waiting" ? `<span class="chip warn">Incoming</span>` : `<span class="chip ok">${esc(phase)}</span>`}${call.expert_label ? `<span class="chip">${esc(call.expert_label)}</span>` : ""}${call.ticket_code ? `<span class="chip">${esc(call.ticket_code)}</span>` : ""}</div>
+    ${!ended
+      ? `<button class="primary compact accept-support" data-id="${call.id}">${phase === "live" ? "Open session" : "Answer call"}</button>`
+      : `<div class="support-ended-actions">
+          ${ticketId ? `<button class="primary compact open-support-transcript" data-ticket-id="${attr(ticketId)}">Read transcription</button>
+          <button class="secondary compact open-support-ticket" data-ticket-id="${attr(ticketId)}">Open ticket</button>` : `<span class="muted">No ticket saved</span>`}
+        </div>`}
+  </article>`;
+}
+
+function supportTicketRow(call) {
+  const ticketId = call.ticket_id || call.ticket?.id || "";
+  const ticketCode = call.ticket_code || "pending";
+  return `<article class="test-card ticket-card support-ticket-row" data-call-id="${call.id}">
+    <div class="ticket-card-main">
+      <div>
+        <h3>${esc(call.call_code)} · ${esc(ticketCode)}</h3>
+        <p>${esc(call.description || "Expert Engineer support ticket")}</p>
+        <div class="chips">
+          <span class="chip">ended</span>
+          <span class="chip">${esc(deviceBadge(call.device))}</span>
+          ${ticketCode !== "pending" ? `<span class="chip ok">transcription</span>` : ""}
+        </div>
+      </div>
+      <div class="ticket-card-actions">
+        ${ticketId ? `<button class="primary compact open-support-transcript" data-ticket-id="${attr(ticketId)}">Read transcription</button>
+        <button class="secondary compact open-support-ticket" data-ticket-id="${attr(ticketId)}">Open ticket</button>` : `<span class="muted">No ticket</span>`}
+      </div>
+    </div>
   </article>`;
 }
 
@@ -1242,19 +1462,48 @@ function supportLivePanel(call, messages = []) {
   const room = call.room_code || liveRoomCode;
   const viewerUrl = room ? supportViewerUrl(room) : "";
   const status = supportVideoStatus(call);
-  return `<section class="support-live" id="supportLivePanel">
-    <div class="connected-head"><h2>${esc(call.call_code || "Session")} · Expert Engineer</h2><span class="chip ${status.cls}">${esc(status.label)}</span></div>
-    <p>${esc(call.description || "Live expert engineer session")}</p>
-    ${viewerUrl
-      ? `<iframe class="support-video-frame" id="supportVideoFrame" title="Expert engineer video" allow="camera; microphone; autoplay; fullscreen" src="${attr(viewerUrl)}" data-room="${attr(room)}" data-call-id="${attr(call.id)}"></iframe>
-         <p class="muted" id="supportVideoHint">Video room <strong>${esc(room)}</strong> · <a href="${attr(viewerUrl)}" target="_blank" rel="noopener">Open in new tab</a></p>`
-      : `<div class="support-video-placeholder" id="supportVideoPlaceholder"><p class="muted">Call answered. Waiting for glasses to open the video room…</p><p class="muted">Keep the stream / Video session active on the phone or glasses.</p></div>`}
-    <div class="support-chat" id="supportChat">${messages.map(supportChatBubble).join("") || '<p class="muted">No messages yet.</p>'}</div>
-    <form class="support-chat-input" id="supportChatForm">
-      <input id="supportChatInput" placeholder="Message the field engineer..." autocomplete="off">
-      <button class="primary compact" type="submit">Send</button>
-    </form>
-    <div class="modal-actions"><button type="button" class="secondary" id="refreshSupport">Refresh</button><button type="button" class="primary" id="endSupportCall">End call · create open evidence ticket</button></div>
+  return `<section class="support-live support-call-immersive" id="supportLivePanel">
+    <div class="call-stage" id="supportCallStage">
+      <div class="call-stage-top">
+        <div class="call-stage-identity">
+          <span class="call-live-dot" aria-hidden="true"></span>
+          <div>
+            <strong class="call-stage-title">${esc(call.call_code || "Session")} · Lab Expert Engineer</strong>
+            <p class="call-stage-sub">${esc(call.description || "Live glasses video call")}</p>
+          </div>
+        </div>
+        <div class="call-stage-badges">
+          <span class="chip ${status.cls} call-status-chip">${esc(status.label)}</span>
+          ${room ? `<span class="call-room-chip">Room ${esc(room)}</span>` : ""}
+        </div>
+      </div>
+      <div class="call-stage-video">
+        ${viewerUrl
+          ? `<iframe class="support-video-frame" id="supportVideoFrame" title="Lab Expert Engineer video" allow="camera; microphone; autoplay; fullscreen" allowfullscreen src="${attr(viewerUrl)}" data-room="${attr(room)}" data-call-id="${attr(call.id)}"></iframe>`
+          : `<div class="support-video-placeholder call-waiting-stage" id="supportVideoPlaceholder">
+              <div class="call-waiting-pulse" aria-hidden="true"></div>
+              <p><strong>Connecting video…</strong></p>
+              <p class="muted">Call answered. Waiting for glasses to open the video room.</p>
+              <p class="muted">Keep the stream / Video session active on the phone or glasses.</p>
+            </div>`}
+        <div class="call-stage-vignette" aria-hidden="true"></div>
+      </div>
+      <div class="call-stage-bar">
+        <button type="button" class="call-ctrl secondary compact" id="expandSupportCall" title="Immersive fullscreen">Fullscreen</button>
+        <button type="button" class="call-ctrl secondary compact" id="refreshSupport">Refresh</button>
+        ${viewerUrl ? `<a class="call-ctrl secondary compact" href="${attr(viewerUrl)}" target="_blank" rel="noopener">Pop out</a>` : ""}
+        <button type="button" class="call-ctrl primary compact call-end" id="endSupportCall">End call</button>
+      </div>
+    </div>
+    <aside class="call-side">
+      <h3>Call chat</h3>
+      <div class="support-chat" id="supportChat">${messages.map(supportChatBubble).join("") || '<p class="muted">No messages yet.</p>'}</div>
+      <form class="support-chat-input" id="supportChatForm">
+        <input id="supportChatInput" placeholder="Message the field engineer…" autocomplete="off">
+        <button class="primary compact" type="submit">Send</button>
+      </form>
+      <p class="muted call-side-note">Ending the call creates an open evidence ticket with transcription.</p>
+    </aside>
   </section>`;
 }
 
@@ -1270,11 +1519,30 @@ function supportView() {
     }
   }
   const active = supportCalls.find(c => c.id === activeSupportId) || null;
+  const liveCalls = supportCalls.filter(c => c.status !== "ended" && c.call_phase !== "ended");
+  const endedCalls = supportCalls.filter(c => c.status === "ended" || c.call_phase === "ended");
+  const ticketsToShow = supportShowAllTickets ? endedCalls : endedCalls.slice(0, 5);
   return withAgentChat(`${agentPageHead(demo, { actions: '<button class="secondary" id="refreshSupportQueue">Refresh queue</button>' })}
-    <section class="demo-banner"><strong>How it works:</strong> Live call = In Progress. When the call ends, the Expert Engineer session closes. An <em>evidence ticket</em> is created and stays <strong>open</strong> until you close it manually on Evidence Tickets.</section>
-    <section class="support-layout">
-      <section class="support-queue"><h2>Incoming requests</h2><div class="support-queue-list" id="supportQueue">${supportCalls.map(supportCallCard).join("") || '<p class="muted">No expert engineer requests yet. Start a call from the glasses app or say “Expert Engineer Agent”.</p>'}</div></section>
-      ${active ? supportLivePanel(active, active.messages || []) : `<section class="support-live" id="supportLivePanel"><p class="muted">Waiting for an incoming Expert Engineer request…</p></section>`}
+    <section class="demo-banner" id="supportTopAnchor"><strong>How it works:</strong> Live call = In Progress. When the call ends, a support ticket is saved with the <em>call transcription</em>. Click <strong>Display all</strong> below to open and read every Expert Engineer ticket.</section>
+    <section class="support-layout${active ? " support-layout-live" : ""}">
+      ${active ? supportLivePanel(active, active.messages || []) : `<section class="support-live" id="supportLivePanel"><p class="muted">Waiting for an incoming Lab Expert Engineer request…</p></section>`}
+      <section class="support-queue${active ? " support-queue-collapsed" : ""}">
+        <h2>Incoming requests</h2>
+        <div class="support-queue-list" id="supportQueue">${liveCalls.map(supportCallCard).join("") || '<p class="muted">No live Expert Engineer requests. Start a call from the glasses app or say “Lab Expert Engineer”.</p>'}</div>
+      </section>
+    </section>
+    <section class="support-tickets-panel">
+      <div class="connected-head">
+        <h2>Expert Engineer support tickets</h2>
+        <span class="count"><strong>${endedCalls.length}</strong> ended</span>
+      </div>
+      <div class="toolbar support-tickets-toolbar">
+        <button type="button" class="primary compact" id="displayAllSupportTickets">${supportShowAllTickets ? "Show recent" : "Display all"}</button>
+        <button type="button" class="secondary compact" id="openRemoteTicketsFilter">Open in Evidence Tickets</button>
+      </div>
+      <section class="test-list" id="supportTicketList">
+        ${ticketsToShow.map(supportTicketRow).join("") || '<p class="muted">No ended Expert Engineer tickets yet. End a live call to create one with transcription.</p>'}
+      </section>
     </section>`);
 }
 
@@ -1299,12 +1567,14 @@ function stopSupportPoll() {
 function syncSupportLiveHeader(active) {
   const panel = $("#supportLivePanel");
   if (!panel || !active) return;
-  const title = panel.querySelector(".connected-head h2");
-  const chip = panel.querySelector(".connected-head .chip");
-  if (title) title.textContent = `${active.call_code || "Session"} · Expert Engineer`;
+  const title = panel.querySelector(".call-stage-title") || panel.querySelector(".connected-head h2");
+  const chip = panel.querySelector(".call-status-chip") || panel.querySelector(".connected-head .chip");
+  const sub = panel.querySelector(".call-stage-sub");
+  if (title) title.textContent = `${active.call_code || "Session"} · Lab Expert Engineer`;
+  if (sub && active.description) sub.textContent = active.description;
   if (chip) {
     const status = supportVideoStatus(active);
-    chip.className = `chip ${status.cls}`;
+    chip.className = `chip ${status.cls} call-status-chip`;
     chip.textContent = status.label;
   }
 }
@@ -1319,10 +1589,41 @@ function clearSupportViewer() {
   liveViewerMounted = false;
 }
 
+function bindSupportTicketActions() {
+  $$(".open-support-transcript").forEach(btn => {
+    btn.onclick = e => {
+      e.stopPropagation();
+      const id = Number(btn.dataset.ticketId);
+      if (id) showTicketTranscript(id);
+    };
+  });
+  $$(".open-support-ticket").forEach(btn => {
+    btn.onclick = e => {
+      e.stopPropagation();
+      const id = Number(btn.dataset.ticketId);
+      if (id) showTicket(id);
+    };
+  });
+}
+
 function updateSupportSoft() {
+  const liveCalls = supportCalls.filter(c => c.status !== "ended" && c.call_phase !== "ended");
+  const endedCalls = supportCalls.filter(c => c.status === "ended" || c.call_phase === "ended");
   const queue = $("#supportQueue");
-  if (queue) queue.innerHTML = supportCalls.map(supportCallCard).join("") || '<p class="muted">No expert engineer requests yet.</p>';
+  if (queue) {
+    queue.innerHTML = liveCalls.map(supportCallCard).join("")
+      || '<p class="muted">No live Expert Engineer requests. Start a call from the glasses app or say “Expert Engineer Agent”.</p>';
+  }
+  const ticketList = $("#supportTicketList");
+  if (ticketList) {
+    const ticketsToShow = supportShowAllTickets ? endedCalls : endedCalls.slice(0, 5);
+    ticketList.innerHTML = ticketsToShow.map(supportTicketRow).join("")
+      || '<p class="muted">No ended Expert Engineer tickets yet. End a live call to create one with transcription.</p>';
+  }
+  const displayBtn = $("#displayAllSupportTickets");
+  if (displayBtn) displayBtn.textContent = supportShowAllTickets ? "Show recent" : "Display all";
   $$(".accept-support").forEach(btn => btn.onclick = () => acceptSupportCall(Number(btn.dataset.id)));
+  bindSupportTicketActions();
 
   // Drop ended/stale selected sessions so we never keep reconnecting an old room.
   let active = supportCalls.find(c => c.id === activeSupportId);
@@ -1360,9 +1661,9 @@ function updateSupportSoft() {
 
   if (!room) {
     if (frame) clearSupportViewer();
-    const headChip = $("#supportLivePanel .connected-head .chip");
+    const headChip = $("#supportLivePanel .call-status-chip") || $("#supportLivePanel .connected-head .chip");
     if (headChip && (active.call_phase === "live" || active.call_phase === "accepted" || active.call_phase === "waiting")) {
-      headChip.className = "chip warn";
+      headChip.className = "chip warn call-status-chip";
       headChip.textContent = "waiting for glasses video";
     }
     return;
@@ -1424,12 +1725,18 @@ function startIncomingRing(call) {
   const panel = $("#incomingCall");
   const title = $("#incomingCallTitle");
   const desc = $("#incomingCallDesc");
-  if (title) title.textContent = `${call.call_code || "Call"} · Expert Engineer`;
+  if (title) title.textContent = `${call.call_code || "Call"} · Lab Expert Engineer`;
   if (desc) desc.textContent = call.description || "New request from AI glasses";
   panel?.classList.remove("hidden");
   stopIncomingRingAudio();
   beepRingTone();
   ringTimer = setInterval(beepRingTone, 1600);
+  // Jump to Expert Engineer page top so the live call is visible without scrolling up.
+  if (currentView !== "support") {
+    showView("support").catch(() => {}).finally(() => scrollMainToTop({ smooth: false }));
+  } else {
+    scrollMainToTop({ smooth: false });
+  }
 }
 
 function stopIncomingRingAudio() {
@@ -1510,6 +1817,7 @@ async function acceptSupportCall(id) {
   // Always rebuild the live panel so title/iframe match this call (never keep an old room).
   render();
   bindSupport();
+  scrollMainToTop({ smooth: false });
   // User gesture (Answer) unlocks remote audio inside the support viewer iframe.
   setTimeout(() => {
     try {
@@ -1530,15 +1838,34 @@ async function answerIncomingCall() {
   await acceptSupportCall(ringingCallId);
 }
 
-async function sendSupportMessage(text) {
+async function sendSupportMessage(text, sender = "expert") {
   if (!activeSupportId || !text.trim()) return;
   await api(`/api/support/sessions/${activeSupportId}/messages`, {
     method: "POST",
-    body: JSON.stringify({ sender: "expert", message: text.trim() }),
+    body: JSON.stringify({ sender, message: text.trim() }),
   });
   await loadActiveSupportDetail();
   updateSupportSoft();
 }
+
+async function handleSupportTranscriptLine(data) {
+  if (!activeSupportId) return;
+  const text = String(data?.text || "").trim();
+  if (!text) return;
+  const sender = String(data?.sender || "expert").trim() || "expert";
+  try {
+    await sendSupportMessage(text, sender);
+  } catch (err) {
+    console.warn("support transcript post failed", err);
+  }
+}
+
+window.addEventListener("message", (event) => {
+  const data = event.data || {};
+  if (data.type === "lab-transcript-line") {
+    handleSupportTranscriptLine(data).catch(() => {});
+  }
+});
 
 async function collectSupportEvidenceFrames(timeoutMs = 2500) {
   const frame = $("#supportVideoFrame");
@@ -1568,9 +1895,17 @@ async function collectSupportEvidenceFrames(timeoutMs = 2500) {
 }
 
 async function endSupportCall() {
+  let openedTicketId = null;
+  let openedHasTranscript = false;
   if (activeSupportId) {
     if (!confirm("End this Expert Engineer call? The live session will close. An evidence ticket will be created and left OPEN for you to close manually.")) return;
     toast("Ending call & saving evidence ticket…");
+    await loadActiveSupportDetail().catch(() => {});
+    const active = supportCalls.find(c => c.id === activeSupportId);
+    const liveTranscript = (active?.messages || [])
+      .map(m => `[${String(m.sender || "system").trim()}] ${String(m.message || "").trim()}`)
+      .filter(line => line.length > 3)
+      .join("\n");
     const frames = await collectSupportEvidenceFrames();
     const body = {
       support_call_id: activeSupportId,
@@ -1578,14 +1913,19 @@ async function endSupportCall() {
       allow_empty_evidence: true,
     };
     if (frames.length) body.video_frames = frames;
+    if (liveTranscript) body.transcript = liveTranscript;
     const result = await api("/api/support/end", {
       method: "POST",
       body: JSON.stringify(body),
     });
     const code = result.ticket_code || result.ticket?.ticket_code || "saved";
-    toast(frames.length
-      ? `Call closed. Evidence ticket ${code} is open (${frames.length} frames) — close it manually when done.`
-      : `Call closed. Evidence ticket ${code} is open — close it manually when done.`);
+    openedTicketId = result.ticket_id || result.ticket?.id || null;
+    openedHasTranscript = Boolean(result.transcript || result.ticket?.transcript || liveTranscript);
+    toast(openedHasTranscript
+      ? `Call closed. Ticket ${code} saved with transcription.`
+      : frames.length
+        ? `Call closed. Evidence ticket ${code} is open (${frames.length} frames).`
+        : `Call closed. Evidence ticket ${code} is open.`);
   }
   try {
     $("#supportVideoFrame")?.contentWindow?.postMessage({ type: "lab-end-viewer" }, "*");
@@ -1596,14 +1936,29 @@ async function endSupportCall() {
   clearSupportViewer();
   hideIncomingCall();
   await loadSupportCalls();
+  await loadTickets();
   await loadTaskBoard();
   render();
   bindSupport();
+  if (openedTicketId) {
+    if (openedHasTranscript) showTicketTranscript(openedTicketId);
+    else showTicket(openedTicketId);
+  }
 }
 
 function bindSupport() {
   $("#refreshSupportQueue")?.addEventListener("click", async () => { await loadSupportCalls(); if (activeSupportId) await loadActiveSupportDetail(); updateSupportSoft(); toast("Queue refreshed"); });
   $$(".accept-support").forEach(btn => btn.onclick = () => acceptSupportCall(Number(btn.dataset.id)));
+  $("#displayAllSupportTickets")?.addEventListener("click", () => {
+    supportShowAllTickets = !supportShowAllTickets;
+    render();
+    bindSupport();
+  });
+  $("#openRemoteTicketsFilter")?.addEventListener("click", () => {
+    ticketFilter = "remote_support";
+    showView("tickets");
+  });
+  bindSupportTicketActions();
   $("#supportChatForm")?.addEventListener("submit", async e => {
     e.preventDefault();
     const input = $("#supportChatInput");
@@ -1613,6 +1968,12 @@ function bindSupport() {
   });
   $("#refreshSupport")?.addEventListener("click", async () => { await loadActiveSupportDetail(); updateSupportSoft(); });
   $("#endSupportCall")?.addEventListener("click", () => endSupportCall().catch(err => toast(err.message)));
+  $("#expandSupportCall")?.addEventListener("click", () => {
+    const stage = $("#supportCallStage") || $("#supportLivePanel");
+    if (!stage) return;
+    if (!document.fullscreenElement) stage.requestFullscreen?.().catch(() => toast("Fullscreen not available"));
+    else document.exitFullscreen?.().catch(() => {});
+  });
   const frame = $("#supportVideoFrame");
   if (frame && liveRoomCode) frame.dataset.room = liveRoomCode;
   const chat = $("#supportChat");
@@ -1646,10 +2007,8 @@ function bindNav() {
 function scrollChatToEnd() {
   const run = () => {
     const thread = document.getElementById("liveChatThread");
-    const workspace = document.querySelector(".chat-workspace");
     const dock = thread?.closest(".agent-chat-dock");
     if (thread) thread.scrollTop = thread.scrollHeight;
-    if (workspace) workspace.scrollTop = workspace.scrollHeight;
     if (dock) dock.scrollTop = dock.scrollHeight;
     const last = thread?.querySelector(".msg-row:last-child");
     if (last) last.scrollIntoView({ block: "end", behavior: "smooth" });
@@ -1659,6 +2018,30 @@ function scrollChatToEnd() {
     requestAnimationFrame(run);
     setTimeout(run, 60);
   });
+}
+
+/** Always land at the top of the main pane (latest tickets / live call), not mid-scroll. */
+function scrollMainToTop({ smooth = false } = {}) {
+  const behavior = smooth ? "smooth" : "auto";
+  const workspace = document.querySelector(".chat-workspace");
+  const main = $("#main");
+  const topTargets = [workspace, main, document.scrollingElement, document.documentElement, document.body].filter(Boolean);
+  for (const el of topTargets) {
+    try {
+      el.scrollTop = 0;
+      if (typeof el.scrollTo === "function") el.scrollTo({ top: 0, left: 0, behavior });
+    } catch {
+      try { el.scrollTop = 0; } catch {}
+    }
+  }
+  try { window.scrollTo({ top: 0, left: 0, behavior }); } catch { try { window.scrollTo(0, 0); } catch {} }
+  const anchor = $("#supportTopAnchor")
+    || document.querySelector(".page-head")
+    || document.querySelector(".support-live")
+    || document.querySelector(".chat-thread")
+    || document.querySelector(".agent-page-body")
+    || main;
+  try { anchor?.scrollIntoView?.({ block: "start", behavior }); } catch {}
 }
 
 function bindChat() {
@@ -1706,10 +2089,18 @@ async function sendMissionChat(text) {
       download_url: result.download_url
         || (String(result.reply || "").match(/\/api\/reports\/[\w.%+-]+\.pptx/i) || [])[0]
         || "",
+      excel_url: result.excel_url
+        || (String(result.reply || "").match(/\/api\/reports\/[\w.%+-]+\.csv/i) || [])[0]
+        || "",
+      charts: Array.isArray(result.charts) ? result.charts : [],
+      tables: Array.isArray(result.tables) ? result.tables : [],
+      analytics: result.analytics || null,
     });
     if (result.routed && result.agent && result.agent !== "chat" && result.agent !== threadView) {
       toast(`Routed to ${result.agent_name || result.agent}`);
     }
+    if (result.tables?.length) toast("Smart table ready in chat");
+    else if (result.charts?.length) toast("Analysis charts ready in chat");
     // Reports and Q&A stay in this chat. Only navigate on an explicit open/show command.
     const explicitOpen = /^(open|show|go to|launch|switch to)\b/i.test(message)
       || (result.source === "local" && /^Opening\b/i.test(String(result.reply || "")));
@@ -1728,6 +2119,7 @@ async function sendMissionChat(text) {
     chatBusy = false;
     render();
     scrollChatToEnd();
+    requestAnimationFrame(() => hydrateChatCharts());
   }
 }
 
@@ -1768,7 +2160,10 @@ function render() {
   $("#main").innerHTML = (views[currentView] || chatView)();
   updateChatHeader();
   renderSidebar();
-  if (currentView === "chat" || AGENT_CHAT_VIEWS.has(currentView)) bindChat();
+  if (currentView === "chat" || AGENT_CHAT_VIEWS.has(currentView)) {
+    bindChat();
+    requestAnimationFrame(() => hydrateChatCharts());
+  }
   if (currentView === "overview" || currentView === "agents") bindOverview();
   if (currentView === "dashboard" || currentView === "kanban") bindTaskBoard();
   if (currentView === "inventory") bindInventory();
@@ -1778,6 +2173,7 @@ function render() {
   if (currentView === "tickets") bindTickets();
   if (currentView === "ab-twin") bindAbTwin();
   if (currentView === "support") { bindSupport(); startSupportPoll(); }
+  requestAnimationFrame(() => scrollMainToTop({ smooth: false }));
 }
 
 async function showView(view) {
@@ -1809,9 +2205,11 @@ async function showView(view) {
     await loadPlatformConfig();
     await loadSupportCalls();
     render();
+    scrollMainToTop({ smooth: false });
     return;
   }
   render();
+  scrollMainToTop({ smooth: false });
 }
 
 async function openInventoryDialog(id) {

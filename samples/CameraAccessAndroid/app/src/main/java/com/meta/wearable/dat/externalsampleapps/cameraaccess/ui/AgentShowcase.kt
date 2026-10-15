@@ -43,14 +43,14 @@ data class LabAgentUi(
 )
 
 val LabAgentCatalog: List<LabAgentUi> = listOf(
-    LabAgentUi("inventory", "Lab Inventory", "Locate gear & stock", "01", Icons.Filled.Inventory2, Color(0xFF7DD3A7)),
-    LabAgentUi("knowledge", "Lab Knowledge", "Procedures & runbooks", "02", Icons.Filled.MenuBook, Color(0xFF8EC5FF)),
-    LabAgentUi("visual", "Visual Troubleshoot", "Analyze screens & alarms", "03", Icons.Filled.Visibility, Color(0xFFFFB86B)),
-    LabAgentUi("tests", "Autonomous Tests", "Mobile PS & lab cycles", "04", Icons.Filled.Science, Color(0xFFD9F06F)),
-    LabAgentUi("tickets", "Evidence Tickets", "Screenshot & video proof", "05", Icons.Filled.ConfirmationNumber, Color(0xFFF0A8C8)),
-    LabAgentUi("support", "Expert Engineer", "Live remote support call", "06", Icons.Filled.HeadsetMic, Color(0xFF6EE7B7)),
-    LabAgentUi("ab-twin", "ab-twin", "Digital twin from walk-through", "07", Icons.Filled.ViewInAr, Color(0xFFA5B4FC)),
-    LabAgentUi("chat", "Mission Control", "Lab manager & voice co-pilot", "AI", Icons.Filled.AutoAwesome, LabVisionColors.Accent),
+    LabAgentUi("chat", "UAELAB AI Assistant", "Voice co-pilot · full agent roster", "AI", Icons.Filled.AutoAwesome, LabVisionColors.Accent),
+    LabAgentUi("inventory", "Lab Inventory Agent", "Locate gear & stock", "01", Icons.Filled.Inventory2, Color(0xFF7DD3A7)),
+    LabAgentUi("knowledge", "Lab Knowledge Assistant", "Procedures & runbooks", "02", Icons.Filled.MenuBook, Color(0xFF8EC5FF)),
+    LabAgentUi("tests", "Mobile PS Agent", "Dual-UE packet core validation", "03", Icons.Filled.Science, Color(0xFFD9F06F)),
+    LabAgentUi("tickets", "Evidence Ticket Agent", "Screenshot & video proof", "04", Icons.Filled.ConfirmationNumber, Color(0xFFF0A8C8)),
+    LabAgentUi("support", "Lab Expert Engineer", "Live remote support call", "05", Icons.Filled.HeadsetMic, Color(0xFF6EE7B7)),
+    LabAgentUi("ab-twin", "Digital Capture Agent", "Walk-through digital capture", "06", Icons.Filled.ViewInAr, Color(0xFFA5B4FC)),
+    LabAgentUi("visual", "Visual Troubleshoot", "Analyze screens & alarms", "07", Icons.Filled.Visibility, Color(0xFFFFB86B)),
 )
 
 @Composable

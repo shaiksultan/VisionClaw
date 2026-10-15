@@ -1,7 +1,7 @@
-# ab-twin — Digital Twin Generator from AI-Glasses Video
+# ab-twin — Digital Capture from AI-Glasses Video
 
 Converts a Meta Ray-Ban Gen 2 walk-through video (target 3K) into a navigable
-3D Gaussian Splatting lab twin, viewable in the browser.
+Digital Capture (walk-through video + look-around photos) in the browser.
 
 ## Prefer existing OSS (preflight)
 
@@ -36,7 +36,7 @@ Browser viewer  /twin-viewer.html?id=TWIN-…
 
 ## Voice / demo prompt
 
-> “Create digital twin — capture the lab walk-through video and build the twin.”
+> “Create digital capture — record the lab walk-through and build the capture.”
 
 ## API
 
@@ -45,6 +45,10 @@ Browser viewer  /twin-viewer.html?id=TWIN-…
 | GET | `/api/twins` |
 | POST | `/api/twins` |
 | GET | `/api/twins/{id}` |
+| GET | `/api/twins/{id}/download/mp4` | Download capture MP4 for offline real-twin processing |
+| GET | `/api/twins/{id}/download/source` | Original `input/capture.mp4` |
+| GET | `/api/twins/{id}/download/walkthrough` | Preview walkthrough MP4 |
+| POST | `/api/twins/{id}/processed` | Upload processed PLY / SPLAT / MP4 / ZIP (`{ file: dataUrl, filename }`) |
 | GET | `/api/twins/{id}/frames` |
 | GET | `/api/twins/{id}/frames/{name}` |
 | GET | `/api/twins/{id}/exports/{file}` |

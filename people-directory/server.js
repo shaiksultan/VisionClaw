@@ -15,6 +15,8 @@ const {
   handleTicketPptxChat,
   buildTicketsPptx,
 } = require("./lib/ticket-pptx");
+const { handleAnalyticsChat } = require("./lib/mission-analytics");
+const { handleSmartTableChat } = require("./lib/mission-tables");
 const REPORTS_DIR = path.join(DATA_DIR, "reports");
 
 function loadOpenClawConfig() {
@@ -157,14 +159,63 @@ function agentPlaybook() {
 
 function labManagerPlaybookText() {
   const lines = [
-    "UAELAB agent roster (Mission Control / Lab Manager coordinates these):",
+    "UAELAB agent roster (UAELAB AI Assistant / Mission Control coordinates these):",
     ...DEMO_AGENTS.map(a =>
       `- ${a.id} | ${a.name} | ${a.routeAgent} — ${a.routeDesc}. Example: "${a.example}" → ACTION_VIEW:${a.id}`
     ),
-    "- chat | Mission Control (Lab Manager) — lab-wide coordination, tickets DB, routing.",
+    "- chat | UAELAB AI Assistant (Mission Control) — lab-wide coordination, tickets DB, routing.",
     "When the operator should work inside a specialist UI, include ACTION_VIEW:<id> on its own line.",
   ];
   return lines.join("\n");
+}
+
+/** Glasses / chat: “how can you help”, “who are you”, “list agents”. */
+function wantsAgentHelp(text) {
+  const lower = String(text || "").toLowerCase().replace(/\s+/g, " ").trim();
+  if (!lower) return false;
+  // Speech stutters: "how can you can you help"
+  if (/\bhow can (you|u)(?:\s+can you)?(?:\s+help)?\b/.test(lower)) return true;
+  if (/\b(list|show|name|what|which|all)\b[\s\S]{0,40}\bagents?\b/.test(lower)) return true;
+  if (/\bagents?\b[\s\S]{0,40}\b(list|available|have|do you|can you)\b/.test(lower)) return true;
+  if (/\bwhat (can|do) you (do|help with|help)\b/.test(lower)) return true;
+  if (/\b(who are you|introduce yourself|what are you|your name)\b/.test(lower)) return true;
+  if (/^(hi|hello|hey)\b/.test(lower) && /\b(help|assist|agent)/.test(lower)) return true;
+  if (/^(help|capabilities|what'?s available|menu)\b/.test(lower)) return true;
+  return false;
+}
+
+function agentSpokenName(agent) {
+  return agent.spokenName || agent.name;
+}
+
+/** Short voice-friendly roster — must include every specialist, especially Lab Expert Engineer. */
+function buildUaelabHelpReply() {
+  const lines = [
+    "I am UAELAB AI Assistant. I coordinate Lab AI Mission Control.",
+    "Here are all my agents:",
+    ...DEMO_AGENTS.map((a, i) => `${i + 1}. ${agentSpokenName(a)} — ${a.spokenHelp || a.routeDesc}.`),
+    `${DEMO_AGENTS.length + 1}. Mission Control — tickets, charts, tables, and routing.`,
+    "Tell me which agent you need, or ask your question.",
+  ];
+  return lines.join("\n");
+}
+
+function handleAgentHelpChat(message) {
+  if (!wantsAgentHelp(message)) return null;
+  const reply = buildUaelabHelpReply();
+  return {
+    reply,
+    spoken_summary: reply.replace(/\n+/g, " "),
+    source: "local-help",
+    agent: "chat",
+    agent_name: "UAELAB AI Assistant",
+    agents: DEMO_AGENTS.map(a => ({
+      id: a.id,
+      name: agentSpokenName(a),
+      purpose: a.spokenHelp || a.routeDesc,
+    })),
+    action: null,
+  };
 }
 
 function resolveChatAction(text) {
@@ -176,8 +227,8 @@ function resolveChatAction(text) {
     { view: "tickets", keys: ["ticket", "evidence", "tkt"] },
     { view: "inventory", keys: ["inventory", "stock", "equipment"] },
     { view: "knowledge", keys: ["knowledge", "procedure", "docs"] },
-    { view: "support", keys: ["support", "expert engineer", "live call", "engineer"] },
-    { view: "ab-twin", keys: ["twin", "digital twin", "ab-twin"] },
+    { view: "support", keys: ["support", "expert engineer", "lab expert engineer", "live call", "engineer"] },
+    { view: "ab-twin", keys: ["twin", "digital twin", "digital capture", "ab-twin", "capture"] },
     { view: "tests", keys: ["test", "run test"] },
     { view: "mobile-ps", keys: ["mobile ps", "packet core"] },
     { view: "dashboard", keys: ["dashboard"] },
@@ -209,12 +260,14 @@ function resolveChatAction(text) {
 function inferSpecialistFromMessage(message) {
   const lower = String(message || "").toLowerCase();
   if (!lower.trim()) return null;
+  // Capability / intro questions stay with UAELAB AI Assistant (full agent list).
+  if (wantsAgentHelp(lower)) return null;
   const rules = [
     { id: "inventory", patterns: [/\binventory\b/, /\bstock\b/, /\bequipment\b/, /\bwhere is\b/, /\bhow many\b.*\b(available|phones?|boxes?)\b/, /\brf shield\b/, /\badd (an? )?item\b/] },
-    { id: "knowledge", patterns: [/\bknowledge\b/, /\bprocedure\b/, /\brunbook\b/, /\bdocumentation\b/, /\bvalidation (procedure|workflow)\b/, /\bhow (do|to)\b/] },
+    { id: "knowledge", patterns: [/\bknowledge\b/, /\bprocedure\b/, /\brunbook\b/, /\bdocumentation\b/, /\bvalidation (procedure|workflow)\b/, /\bhow (do|to) (?!you help)\b/] },
     { id: "tickets", patterns: [/\bticket\b/, /\bevidence\b/, /\bfile (an? )?incident\b/, /\bcreate.*(ticket|evidence)\b/, /\btkt-/] },
-    { id: "support", patterns: [/\bexpert engineer\b/, /\bremote support\b/, /\blive (help|call|support)\b/, /\bcall the expert\b/, /\bsupport (call|request|session)s?\b/, /\bSUP-/i] },
-    { id: "ab-twin", patterns: [/\bdigital twin\b/, /\bab-twin\b/, /\bwalk-?through\b/, /\bgaussian\b/, /\bcreate (a )?twin\b/] },
+    { id: "support", patterns: [/\blab expert engineer\b/, /\bexpert engineer\b/, /\bremote support\b/, /\blive (help|call|support)\b/, /\bcall the expert\b/, /\bsupport (call|request|session)s?\b/, /\bSUP-/i] },
+    { id: "ab-twin", patterns: [/\bdigital twin\b/, /\bdigital capture\b/, /\bab-twin\b/, /\bwalk-?through\b/, /\bgaussian\b/, /\bcreate (a )?(twin|capture)\b/] },
     { id: "mobile-ps", patterns: [/\bmobile ps\b/, /\bpacket core\b/, /\bue-a\b/, /\bue-b\b/, /\battach.*(test|validation)\b/] },
   ];
   for (const rule of rules) {
@@ -423,12 +476,13 @@ async function askOpenClaw(message, context, history = [], agent = null) {
   ];
   const system = demo
     ? [
-      `You are ${demo.name} (${demo.routeAgent}) in Lab AI Mission Control.`,
+      `You are ${demo.name} (${demo.routeAgent}) in Lab AI Mission Control, part of UAELAB AI Assistant.`,
       demo.description,
       `Typical user prompt: ${demo.example}`,
       "Stay in this agent role. Answer with this agent's specialty and local lab DB facts.",
-      "Mission Control (Lab Manager) coordinates agents; you are this specialist agent.",
+      "UAELAB AI Assistant (Mission Control) coordinates agents; you are this specialist agent.",
       ...groundRules,
+      "If the user asks who you are / how you can help / to list agents, say you are part of UAELAB AI Assistant and list the full agent roster from the playbook.",
       "If the user asks to switch agents, say which one and include a line exactly like: ACTION_VIEW:<id>",
       "Valid ACTION_VIEW ids: overview,dashboard,agents,inventory,knowledge,tests,mobile-ps,ab-twin,logs,tickets,support,kanban,chat.",
       labManagerPlaybookText(),
@@ -438,8 +492,10 @@ async function askOpenClaw(message, context, history = [], agent = null) {
       JSON.stringify(slimContext),
     ].join("\n")
     : [
-      "You are Mission Control (Lab Manager) for Lab AI Mission Control / e& UAELAB.",
+      "You are UAELAB AI Assistant (Mission Control / Lab Manager) for e& UAELAB Lab AI Mission Control.",
+      "Always introduce yourself as UAELAB AI Assistant when asked who you are, how you can help, or what agents exist.",
       "You coordinate the specialist lab agents below. You understand each agent's purpose, when to use it, and how to open it.",
+      "When the user asks how you can help / what you can do / list agents: greet as UAELAB AI Assistant and list EVERY agent with a one-line purpose (do not skip any).",
       ...groundRules,
       "Route the operator: recommend the right agent, answer lab-wide questions yourself, or open a specialist with ACTION_VIEW:<id>.",
       labManagerPlaybookText(),
@@ -532,7 +588,50 @@ async function handleMissionChat(db, body = {}) {
   const openAction = resolveChatAction(message);
   if (openAction) return openAction;
 
-  // Reports (PPTX etc.) always use local DB — never wait on OpenClaw / shell.
+  // UAELAB AI Assistant intro + full agent roster (glasses: “how can you help”).
+  const helpReport = handleAgentHelpChat(message);
+  if (helpReport) {
+    if (scoped) {
+      return {
+        ...helpReport,
+        action: null,
+        agent: focusAgent.id,
+        agent_name: focusAgent.name,
+        reply: `${helpReport.reply}\n\nYou are currently in ${focusAgent.name}.`,
+      };
+    }
+    return helpReport;
+  }
+
+  // Smart tables (generative UI) — before OpenClaw so we don't get plain markdown pipes.
+  const tableReport = handleSmartTableChat(db, message, history);
+  if (tableReport) {
+    if (scoped) {
+      return {
+        ...tableReport,
+        action: null,
+        agent: focusAgent.id,
+        agent_name: focusAgent.name,
+      };
+    }
+    return tableReport;
+  }
+
+  // Generative analytics UI (charts + analysis PPTX/Excel) — CopilotKit-style cards.
+  const analyticsReport = await handleAnalyticsChat(db, message, history, REPORTS_DIR);
+  if (analyticsReport) {
+    if (scoped) {
+      return {
+        ...analyticsReport,
+        action: null,
+        agent: focusAgent.id,
+        agent_name: focusAgent.name,
+      };
+    }
+    return analyticsReport;
+  }
+
+  // Ticket PPTX reports (local DB) — after analytics so "export analysis pptx" is not stolen.
   const pptxReport = await handleTicketPptxChat(db, message, history, REPORTS_DIR);
   if (pptxReport) {
     if (scoped) return { ...pptxReport, action: pptxReport.action || null, agent: focusAgent.id, agent_name: focusAgent.name };
@@ -666,6 +765,7 @@ const DEMO_AGENTS = [
     number: "01",
     label: "TRACK",
     name: "Lab Inventory Agent",
+    spokenHelp: "find and add lab equipment",
     description: "Voice lookup and add for lab equipment — always capture item description and location.",
     example: "Add RF shield box to inventory with a photo — description: large copper box for RF isolation; location: Bench A Rack 3.",
     tags: ["CUSTOM APP", "INVENTORY API"],
@@ -678,8 +778,9 @@ const DEMO_AGENTS = [
     number: "02",
     label: "KNOW",
     name: "Lab Knowledge Assistant",
+    spokenHelp: "procedures and validation docs",
     description: "Retrieves approved procedures, validation workflows, and lab documentation.",
-    example: "Explain the approved Packet Core Upgrade validation procedure.",
+    example: "Explain the Mobile PS Core Testing procedure.",
     tags: ["CUSTOM APP", "RAG", "DOCS"],
     routeCategory: "KNOWLEDGE",
     routeDesc: "Procedure lookup and validation guidance",
@@ -690,6 +791,8 @@ const DEMO_AGENTS = [
     number: "03",
     label: "ACT",
     name: "Mobile PS Packet Core Upgrade Validation Agent",
+    spokenName: "Mobile PS Agent",
+    spokenHelp: "dual-phone packet core validation",
     description: "Controls two Android UEs over ADB for attach, web, speed, and VoLTE validation during packet core upgrades. Deterministic Python — no LLM in the test path.",
     example: "Assign UE-A and UE-B, check readiness, then start five Mobile PS validation cycles.",
     tags: ["CUSTOM APP", "ADB", "MOBILE PS"],
@@ -702,6 +805,7 @@ const DEMO_AGENTS = [
     number: "04",
     label: "FILE",
     name: "Evidence Ticket Agent",
+    spokenHelp: "screenshot or video evidence tickets",
     description: "Creates tracked tickets with screenshot or video evidence for lab incidents and faults.",
     example: "Create a ticket for this alarm. The evidence is the red SCTP timeout banner on the MME console.",
     tags: ["CUSTOM APP", "EVIDENCE", "TRACKING"],
@@ -713,24 +817,28 @@ const DEMO_AGENTS = [
     id: "support",
     number: "05",
     label: "LIVE",
-    name: "Expert Engineer Agent",
-    description: "Starts a live expert engineer video call from AI glasses, rings Mission Control, and saves the session as a tracked remote support ticket.",
-    example: "Call the Expert Engineer Agent — I need help on this MME alarm screen.",
-    tags: ["CUSTOM APP", "WEBRTC", "EXPERT ENGINEER"],
+    name: "Lab Expert Engineer",
+    spokenName: "Lab Expert Engineer",
+    spokenHelp: "live video support call with Mission Control",
+    description: "Starts a live Lab Expert Engineer video call from AI glasses, rings Mission Control, and saves the session as a tracked remote support ticket.",
+    example: "Call the Lab Expert Engineer — I need help on this MME alarm screen.",
+    tags: ["CUSTOM APP", "WEBRTC", "LAB EXPERT ENGINEER"],
     routeCategory: "SUPPORT",
-    routeDesc: "Live expert engineer video with post-call evidence ticket",
+    routeDesc: "Live Lab Expert Engineer video with post-call evidence ticket",
     routeAgent: "expert-engineer-agent",
   },
   {
     id: "ab-twin",
     number: "06",
-    label: "TWIN",
-    name: "ab-twin — Digital Twin Generator",
-    description: "Capture a Meta Ray-Ban Gen 2 walk-through video of the telecom lab and generate a navigable 3D Gaussian Splatting digital twin viewable in the browser.",
-    example: "Create digital twin — capture the lab walk-through video and build the twin.",
-    tags: ["CUSTOM APP", "GAUSSIAN SPLAT", "3DGS"],
+    label: "CAPTURE",
+    name: "Digital Capture",
+    spokenName: "Digital Capture Agent",
+    spokenHelp: "lab walk-through digital capture with Gaussian splatting",
+    description: "Capture a Meta Ray-Ban Gen 2 walk-through video of the telecom lab and build a navigable Digital Capture (walk video + look-around photos). Offline photoreal rebuild uses Gaussian splatting.",
+    example: "Create digital capture — record the lab walk-through and build the capture.",
+    tags: ["CUSTOM APP", "GAUSSIAN SPLATTING", "3DGS"],
     routeCategory: "TWIN",
-    routeDesc: "AI-glasses video → 3D Gaussian Splatting lab twin",
+    routeDesc: "AI-glasses video → Digital Capture (Gaussian splatting)",
     routeAgent: "ab-twin-agent",
   },
 ];
@@ -881,6 +989,9 @@ function openDatabase(filename = DB_PATH) {
   if (!ticketColumns.some(column => column.name === "support_call_id")) {
     db.exec("ALTER TABLE tickets ADD COLUMN support_call_id INTEGER");
   }
+  if (!ticketColumns.some(column => column.name === "transcript")) {
+    db.exec("ALTER TABLE tickets ADD COLUMN transcript TEXT NOT NULL DEFAULT ''");
+  }
   const supportColumns = db.prepare("PRAGMA table_info(support_calls)").all();
   if (!supportColumns.some(column => column.name === "call_phase")) {
     db.exec("ALTER TABLE support_calls ADD COLUMN call_phase TEXT NOT NULL DEFAULT 'waiting'");
@@ -924,19 +1035,93 @@ function seedDemoData(db) {
     insert.run("Optical power meter", "Measurement", "Bench 1", 2, "Available", "");
   }
   if (!db.prepare("SELECT COUNT(*) count FROM knowledge").get().count) {
-    db.prepare("INSERT INTO knowledge(title,slug,summary,content,tags) VALUES(?,?,?,?,?)").run(
-      "Packet Core Upgrade validation procedure",
-      "packet-core-upgrade-validation",
-      "Approved lab workflow for validating a Packet Core software upgrade before production rollout.",
-      [
-        "1. Pre-checks: confirm backup snapshot, rollback image, and maintenance window are approved.",
-        "2. Baseline: run Mobile PS smoke suite (5 cycles) on the current build and archive KPIs.",
-        "3. Upgrade: apply the target Packet Core build in the isolated lab cluster.",
-        "4. Validation: rerun Mobile PS (5 cycles), attach attach/detach traces, and compare KPI deltas.",
-        "5. Sign-off: if failure rate stays within ±2% of baseline, attach the report and request CAB approval.",
+    seedLabKnowledgeArticles(db);
+  }
+}
+
+function seedLabKnowledgeArticles(db) {
+  const insert = db.prepare("INSERT INTO knowledge(title,slug,summary,content,tags) VALUES(?,?,?,?,?)");
+  const articles = [
+    {
+      title: "Mobile PS Core Testing",
+      slug: "mobile-ps-core-testing",
+      summary: "Approved lab procedure for Mobile Packet Switch core validation using dual-UE attach, data, and VoLTE checks before Packet Core changes go live.",
+      tags: "mobile ps,packet core,core testing,ue,volte,validation",
+      content: [
+        "Purpose: Validate Mobile PS / Packet Core behaviour in the UAELAB isolated cluster with two Android UEs (UE-A / UE-B).",
+        "",
+        "1. Pre-checks: confirm lab APN, SIM profiles, and Packet Core build under test. Verify both UEs are ADB-ready and on the lab PLMN.",
+        "2. Baseline: run 5 Mobile PS cycles on the current build — attach, default bearer, HTTP browse, speed sample, and VoLTE call setup. Archive KPIs.",
+        "3. Change window: apply the Packet Core change (config or software) only after baseline is stored in Mission Control.",
+        "4. Validation: rerun the same 5 Mobile PS cycles. Capture attach/detach traces and compare attach success, latency, and VoLTE setup time to baseline (±2% tolerance).",
+        "5. Failures: if any cycle fails attach or VoLTE, open an Evidence Ticket with screenshot/video and stop rollout.",
+        "6. Sign-off: attach the Mobile PS report in Mission Control and request CAB approval only when KPIs stay within tolerance.",
+        "",
+        "Voice prompt example: Explain the Mobile PS Core Testing procedure.",
       ].join("\n"),
-      "packet core,upgrade,validation,mobile ps",
-    );
+    },
+    {
+      title: "IOT Smart Cities Validation",
+      slug: "iot-smart-cities-validation",
+      summary: "Lab validation workflow for IoT / Smart Cities devices — connectivity, telemetry, platform onboarding, and alarm handling before field pilots.",
+      tags: "iot,smart cities,nb-iot,lte-m,telemetry,validation",
+      content: [
+        "Purpose: Validate IoT and Smart Cities endpoints (sensors, gateways, NB-IoT / LTE-M modules) against the lab IoT platform before city-pilot deployment.",
+        "",
+        "1. Device intake: register device ID, firmware version, SIM/eSIM profile, and target use case (parking, lighting, environment, utilities).",
+        "2. Join & attach: confirm network attach on the lab IoT APN, record RSRP/SINR, and verify IP assignment.",
+        "3. Telemetry: send a known sensor payload every 60 seconds for 15 minutes. Confirm messages arrive on the platform with correct timestamps and device ID.",
+        "4. Command path: push one remote config or actuator command from the platform and confirm device acknowledgement within SLA.",
+        "5. Alarm path: trigger a synthetic fault (e.g. battery low / link loss). Confirm alarm appears in the platform and can be linked to an Evidence Ticket.",
+        "6. Security: verify mutual auth / certificate state and that idle devices do not open unexpected outbound sessions.",
+        "7. Sign-off: store device report, firmware hash, and pass/fail matrix in Lab Knowledge / Mission Control before field install.",
+        "",
+        "Voice prompt example: Explain the IOT Smart Cities Validation procedure.",
+      ].join("\n"),
+    },
+    {
+      title: "Fixed Network Testing",
+      slug: "fixed-network-testing",
+      summary: "Approved fixed-access lab procedure for ONT/OLT, broadband CPE, and backhaul handoff validation including sync, throughput, and service continuity.",
+      tags: "fixed network,olt,ont,broadband,fiber,gpon,testing",
+      content: [
+        "Purpose: Validate fixed access and CPE in the UAELAB fixed-network bay (fiber / GPON / Ethernet handoff) before customer or site rollout.",
+        "",
+        "1. Physical: confirm ONT/OLT or CPE cabling, optics levels, and correct VLAN / service profile for the lab circuit.",
+        "2. Sync: bring the line to sync; record optical levels, sync time, and negotiated line rate.",
+        "3. Layer-3: verify WAN IP, DNS, and default gateway. Ping lab gateway and a known internet probe with ≤1% loss over 100 packets.",
+        "4. Throughput: run bidirectional speed / iPerf sample for 60 seconds. Compare against the service profile minimum.",
+        "5. Service checks: validate voice (if applicable), IPTV/multicast, and data simultaneously — note any priority drops.",
+        "6. Resilience: bounce the ONT/CPE once and confirm auto-resync under the approved recovery time.",
+        "7. Evidence: photograph the ONT status LEDs / OLT port state and file an Evidence Ticket for any fail.",
+        "8. Sign-off: mark the circuit Pass only when sync, throughput, and service checks all meet profile.",
+        "",
+        "Voice prompt example: Explain the Fixed Network Testing procedure.",
+      ].join("\n"),
+    },
+    {
+      title: "SMS Service Testing",
+      slug: "sms-service-testing",
+      summary: "Lab procedure to validate SMSC / SMS service quality — MO/MT delivery, latency, concatenated messages, and failure handling.",
+      tags: "sms,smsc,messaging,mo,mt,service testing",
+      content: [
+        "Purpose: Validate SMS service (SMSC / messaging core) in the lab using test UEs and approved short codes before production traffic changes.",
+        "",
+        "1. Pre-checks: confirm SMSC build, test MSISDNs, short codes, and that spam / firewall rules allow lab numbers.",
+        "2. MO path: from UE-A send a plain SMS to UE-B. Confirm submission ACK and store message ID.",
+        "3. MT path: confirm UE-B receives the message; record end-to-end latency (submit → display).",
+        "4. Round-trip matrix: run 10 MO/MT pairs. Pass if delivery success ≥98% and median latency within the lab SLA.",
+        "5. Concatenated / Unicode: send one long SMS and one non-Latin message; confirm correct reassembly and characters.",
+        "6. Negative tests: power off UE-B, send MT, then power on — confirm store-and-forward delivery. Reject invalid destination and confirm clean error cause.",
+        "7. Evidence: capture SMSC logs / UE screenshots for any fail and open an Evidence Ticket.",
+        "8. Sign-off: attach the SMS test sheet to Mission Control and clear the change only when MO/MT KPIs pass.",
+        "",
+        "Voice prompt example: Explain the SMS Service Testing procedure.",
+      ].join("\n"),
+    },
+  ];
+  for (const a of articles) {
+    insert.run(a.title, a.slug, a.summary, a.content, a.tags);
   }
 }
 
@@ -1170,6 +1355,7 @@ function ticketListItem(ticket) {
     ticket_code: ticket.ticket_code,
     title: ticket.title,
     description: ticket.description,
+    transcript: ticket.transcript || "",
     evidence_type: ticket.evidence_type,
     frame_count: ticket.frame_count,
     status: ticket.status,
@@ -1254,15 +1440,36 @@ function appendSupportCallMessage(db, callId, sender, message) {
 }
 
 function buildSupportTranscript(db, callId) {
-  return supportCallMessages(db, callId).map(row => `[${row.sender}] ${row.message}`).join("\n");
+  return supportCallMessages(db, callId)
+    .map(row => {
+      const sender = String(row.sender || "system").trim() || "system";
+      const message = String(row.message || "").replace(/\s+/g, " ").trim();
+      if (!message) return "";
+      return `[${sender}] ${message}`;
+    })
+    .filter(Boolean)
+    .join("\n")
+    .trim();
+}
+
+function mergeSupportTranscript(db, callId, extra = "") {
+  const fromMessages = buildSupportTranscript(db, callId);
+  const fromBody = String(extra || "").trim();
+  if (fromMessages && fromBody) {
+    // Prefer live messages; append body lines that are not already present.
+    const existing = new Set(fromMessages.split("\n").map(line => line.trim()).filter(Boolean));
+    const extras = fromBody.split("\n").map(line => line.trim()).filter(line => line && !existing.has(line));
+    return [fromMessages, ...extras].join("\n").trim();
+  }
+  return (fromMessages || fromBody).trim();
 }
 
 function finalizeSupportCallTicket(db, call, body = {}) {
-  const transcript = buildSupportTranscript(db, call.id);
+  const transcript = mergeSupportTranscript(db, call.id, body.transcript);
   const description = [
     `Remote support call ${call.call_code}`,
     call.description ? `Issue: ${call.description}` : "",
-    transcript ? `\nTranscript:\n${transcript}` : "",
+    transcript ? `\n## Call transcription\n${transcript}` : "",
   ].filter(Boolean).join("\n");
   const ticketInput = cleanTicket({
     title: body.title || `Remote support · ${call.call_code}`,
@@ -1279,11 +1486,12 @@ function finalizeSupportCallTicket(db, call, body = {}) {
   });
   const ticketCode = nextTicketCode(db);
   const result = db.prepare(`
-    INSERT INTO tickets(ticket_code,title,description,evidence_type,evidence_data,frame_count,status,device,session_id,ticket_type,support_call_id)
-    VALUES(?,?,?,?,?,?,?,?,?,?,?)
+    INSERT INTO tickets(ticket_code,title,description,evidence_type,evidence_data,frame_count,status,device,session_id,ticket_type,support_call_id,transcript)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
   `).run(
     ticketCode, ticketInput.title, ticketInput.description, ticketInput.evidence_type, ticketInput.evidence_data,
     ticketInput.frame_count, "open", ticketInput.device || call.device, ticketInput.session_id, ticketInput.ticket_type, call.id,
+    transcript,
   );
   const ticketId = Number(result.lastInsertRowid);
   db.prepare(`
@@ -1293,10 +1501,14 @@ function finalizeSupportCallTicket(db, call, body = {}) {
     WHERE id=?
   `).run(ticketId, Number(body.duration_seconds || 0) || 0, ticketInput.frame_count, call.id);
   const saved = db.prepare("SELECT * FROM tickets WHERE id=?").get(ticketId);
+  const ticket = enrichTicketTranscript(db, ticketListItem(saved));
+  ticket.spoken_summary = ticketSummary(saved);
+  ticket.has_transcript = Boolean(ticket.transcript);
   return {
-    ticket: { ...ticketListItem(saved), spoken_summary: ticketSummary(saved) },
+    ticket,
     ticket_id: ticketId,
     ticket_code: ticketCode,
+    transcript: ticket.transcript || "",
   };
 }
 
@@ -1337,8 +1549,36 @@ function closeAbandonedSupportCalls(db, { maxAgeMinutes = 20 } = {}) {
   return closed;
 }
 
-function attachTicketMedia(ticket, { full = false } = {}) {
+function enrichTicketTranscript(db, ticket, { persist = false } = {}) {
+  let transcript = String(ticket.transcript || "").trim();
+  if (!transcript && ticket.support_call_id) {
+    transcript = buildSupportTranscript(db, ticket.support_call_id);
+  }
+  if (!transcript && ticket.description) {
+    for (const marker of ["## Call transcription\n", "Transcript:\n"]) {
+      const idx = String(ticket.description).indexOf(marker);
+      if (idx >= 0) {
+        transcript = String(ticket.description).slice(idx + marker.length).trim();
+        break;
+      }
+    }
+  }
+  const hadStored = Boolean(String(ticket.transcript || "").trim());
+  ticket.transcript = transcript;
+  ticket.has_transcript = Boolean(transcript);
+  if (persist && transcript && ticket.id && !hadStored) {
+    db.prepare("UPDATE tickets SET transcript=?, updated_at=CURRENT_TIMESTAMP WHERE id=?").run(transcript, ticket.id);
+  }
+  return ticket;
+}
+
+function attachTicketMedia(ticket, { full = false, db = null } = {}) {
   const summary = ticketListItem(ticket);
+  if (db) enrichTicketTranscript(db, summary, { persist: full });
+  else {
+    summary.transcript = String(summary.transcript || "").trim();
+    summary.has_transcript = Boolean(summary.transcript);
+  }
   summary.has_evidence = Boolean(ticket.evidence_data);
   if (!ticket.evidence_data) return summary;
   if (ticket.evidence_type === "screenshot") {
@@ -1699,7 +1939,7 @@ function buildTaskBoard(db) {
         id: `twin-${twin.twin_id}`,
         kind: "twin",
         title: twin.twin_id,
-        summary: twin.title || twin.current_step || "Digital twin job",
+        summary: twin.title || twin.current_step || "Digital capture job",
         agent: "ab-twin-agent",
         device: twin.device || "ray-ban",
         executor: twin.engine || "ab-twin",
@@ -1942,19 +2182,31 @@ function createHandler(db, publicDir = PUBLIC_DIR) {
       if (reportMatch && req.method === "GET") {
         skipLog = true;
         const fileName = decodeURIComponent(reportMatch[1]);
-        if (!/^[\w.-]+\.pptx$/i.test(fileName)) return respond(res, 400, { error: "Invalid report name" });
+        if (!/^[\w.-]+\.(pptx|csv)$/i.test(fileName)) return respond(res, 400, { error: "Invalid report name" });
         const filePath = path.resolve(REPORTS_DIR, fileName);
         if (!filePath.startsWith(path.resolve(REPORTS_DIR)) || !fs.existsSync(filePath)) {
           return respond(res, 404, { error: "Report not found" });
         }
+        const isCsv = /\.csv$/i.test(fileName);
         res.writeHead(200, {
-          "Content-Type": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+          "Content-Type": isCsv
+            ? "text/csv; charset=utf-8"
+            : "application/vnd.openxmlformats-officedocument.presentationml.presentation",
           "Content-Disposition": `attachment; filename="${fileName}"`,
           "Access-Control-Allow-Origin": "*",
         });
         return fs.createReadStream(filePath).pipe(res);
       }
       if (url.pathname === "/api/demos" && req.method === "GET") return respond(res, 200, DEMO_AGENTS);
+      if (url.pathname === "/api/help" && req.method === "GET") {
+        const help = handleAgentHelpChat("how can you help");
+        return respond(res, 200, {
+          assistant: "UAELAB AI Assistant",
+          reply: help.reply,
+          spoken_summary: help.spoken_summary,
+          agents: help.agents,
+        });
+      }
       if (url.pathname === "/api/tasks/board" && req.method === "GET") {
         skipLog = true;
         return respond(res, 200, buildTaskBoard(db));
@@ -2093,7 +2345,7 @@ function createHandler(db, publicDir = PUBLIC_DIR) {
         if (!code) return respond(res, 400, { error: "Ticket code is required" });
         const ticket = db.prepare("SELECT * FROM tickets WHERE lower(ticket_code)=lower(?) OR ticket_code LIKE ? ORDER BY id DESC LIMIT 1").get(code, `%${code}%`);
         if (!ticket) return respond(res, 404, { error: "Ticket not found" });
-        const summary = attachTicketMedia(ticket);
+        const summary = attachTicketMedia(ticket, { db });
         summary.spoken_summary = ticketSummary(ticket);
         return respond(res, 200, summary);
       }
@@ -2101,12 +2353,12 @@ function createHandler(db, publicDir = PUBLIC_DIR) {
         const q = `%${url.searchParams.get("q") || ""}%`;
         const includeMedia = url.searchParams.get("include_media") === "1";
         const rows = db.prepare(`
-          SELECT id,ticket_code,title,description,evidence_type,evidence_data,frame_count,status,device,session_id,created_at,updated_at
+          SELECT id,ticket_code,title,description,transcript,evidence_type,evidence_data,frame_count,status,device,session_id,ticket_type,support_call_id,created_at,updated_at
           FROM tickets
-          WHERE ticket_code LIKE ? OR title LIKE ? OR description LIKE ?
+          WHERE ticket_code LIKE ? OR title LIKE ? OR description LIKE ? OR transcript LIKE ?
           ORDER BY id DESC LIMIT 50
-        `).all(q, q, q);
-        return respond(res, 200, rows.map(row => attachTicketMedia(row, { full: includeMedia })));
+        `).all(q, q, q, q);
+        return respond(res, 200, rows.map(row => attachTicketMedia(row, { full: includeMedia, db })));
       }
       if (url.pathname === "/api/tickets" && req.method === "POST") {
         requestBody = await readBody(req);
@@ -2132,7 +2384,7 @@ function createHandler(db, publicDir = PUBLIC_DIR) {
       if (ticketMatch && req.method === "GET") {
         const ticket = db.prepare("SELECT * FROM tickets WHERE id=?").get(Number(ticketMatch[1]));
         if (!ticket) return respond(res, 404, { error: "Ticket not found" });
-        const summary = attachTicketMedia(ticket, { full: true });
+        const summary = attachTicketMedia(ticket, { full: true, db });
         summary.spoken_summary = ticketSummary(ticket);
         return respond(res, 200, summary);
       }
@@ -2147,7 +2399,7 @@ function createHandler(db, publicDir = PUBLIC_DIR) {
         }
         db.prepare("UPDATE tickets SET status=?, updated_at=CURRENT_TIMESTAMP WHERE id=?").run(nextStatus, ticketId);
         const saved = db.prepare("SELECT * FROM tickets WHERE id=?").get(ticketId);
-        const summary = attachTicketMedia(saved);
+        const summary = attachTicketMedia(saved, { db });
         summary.spoken_summary = nextStatus === "closed"
           ? `Evidence ticket ${saved.ticket_code} closed.`
           : `Evidence ticket ${saved.ticket_code} reopened.`;
@@ -2448,7 +2700,7 @@ function createHandler(db, publicDir = PUBLIC_DIR) {
         }
       }
 
-      // ab-twin — Digital Twin from AI-glasses video
+      // ab-twin — Digital Capture from AI-glasses video
       if (url.pathname === "/api/twins" && req.method === "GET") {
         return respond(res, 200, twinPipeline.listTwins());
       }
@@ -2470,13 +2722,13 @@ function createHandler(db, publicDir = PUBLIC_DIR) {
           });
           return respond(res, 201, {
             ...status,
-            spoken_summary: `Digital twin job ${status.twin_id} started. Capture is processing into a navigable lab twin.`,
+            spoken_summary: `Digital capture job ${status.twin_id} started. Processing into a navigable lab capture.`,
           });
         } catch (err) {
           return respond(res, 400, { error: err.message });
         }
       }
-      const twinMatch = url.pathname.match(/^\/api\/twins\/(TWIN-[\w-]+)(?:\/(frames|exports|overlays)(?:\/([^/]+))?)?$/);
+      const twinMatch = url.pathname.match(/^\/api\/twins\/(TWIN-[\w-]+)(?:\/(frames|exports|overlays|download|processed)(?:\/([^/]+))?)?$/);
       if (twinMatch) {
         const twinId = twinMatch[1];
         const section = twinMatch[2];
@@ -2491,6 +2743,31 @@ function createHandler(db, publicDir = PUBLIC_DIR) {
             const overlays = twinPipeline.saveOverlays(twinId, requestBody.overlays || requestBody);
             return respond(res, 200, { twin_id: twinId, overlays, spoken_summary: `${overlays.length} overlays saved on twin.` });
           }
+          if (section === "download" && req.method === "GET") {
+            skipLog = true;
+            const kind = fileName || "mp4";
+            const { file, downloadName } = twinPipeline.resolveDownloadFile(twinId, kind);
+            const stat = fs.statSync(file);
+            res.writeHead(200, {
+              "Content-Type": "video/mp4",
+              "Content-Length": stat.size,
+              "Content-Disposition": `attachment; filename="${downloadName}"`,
+              "Accept-Ranges": "bytes",
+              "Access-Control-Allow-Origin": "*",
+            });
+            return fs.createReadStream(file).pipe(res);
+          }
+          if (section === "processed" && req.method === "POST") {
+            requestBody = await readBody(req);
+            const dataUrl = requestBody.file || requestBody.data || requestBody.video || requestBody.asset;
+            if (!dataUrl) return respond(res, 400, { error: "file (data URL) is required" });
+            const result = twinPipeline.uploadProcessedAsset(twinId, {
+              dataUrl,
+              filename: requestBody.filename || requestBody.name || "",
+              label: requestBody.label || requestBody.title || "",
+            });
+            return respond(res, 201, result);
+          }
           if (section === "frames" && !fileName && req.method === "GET") {
             return respond(res, 200, twinPipeline.listFrames(twinId));
           }
@@ -2504,16 +2781,19 @@ function createHandler(db, publicDir = PUBLIC_DIR) {
             skipLog = true;
             const file = twinPipeline.resolveExportFile(twinId, fileName);
             const ext = path.extname(fileName).toLowerCase();
-            const type = ext === ".ply" ? "application/octet-stream"
+            const type = ext === ".ply" || ext === ".splat" || ext === ".ksplat" || ext === ".glb" ? "application/octet-stream"
               : ext === ".mp4" ? "video/mp4"
+              : ext === ".zip" ? "application/zip"
               : ext === ".json" ? "application/json"
               : "application/octet-stream";
             const stat = fs.statSync(file);
+            const asAttach = url.searchParams.get("download") === "1";
             res.writeHead(200, {
               "Content-Type": type,
               "Content-Length": stat.size,
               "Accept-Ranges": "bytes",
               "Access-Control-Allow-Origin": "*",
+              ...(asAttach ? { "Content-Disposition": `attachment; filename="${path.basename(fileName)}"` } : {}),
             });
             return fs.createReadStream(file).pipe(res);
           }

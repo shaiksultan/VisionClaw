@@ -1,5 +1,5 @@
 /**
- * ab-twin — Digital Twin Generator from AI-Glasses Video
+ * ab-twin — Digital Capture from AI-Glasses Video
  *
  * Pipeline: glasses walk-through video → frames → (Nerfstudio/LongSplat/demo) → browser viewer
  * Prefer OSS: Nerfstudio Splatfacto + gsplat, or LongSplat for unposed casual video.
@@ -268,7 +268,7 @@ async function runDemoEngine(jobDir, twinId, frames) {
   fs.mkdirSync(exportsDir, { recursive: true });
   const ply = await buildColoredPlyFromFrames(path.join(jobDir, "frames"), frames, path.join(exportsDir, "point_cloud.ply"));
 
-  saveStatus(jobDir, { status: "EXPORTING", progress: 70, current_step: "Building continuous panoramic twin" });
+  saveStatus(jobDir, { status: "EXPORTING", progress: 70, current_step: "Building digital capture panorama preview" });
   const panoramaPath = path.join(exportsDir, "panorama.jpg");
   let panoramaReady = false;
   try {
@@ -298,16 +298,16 @@ async function runDemoEngine(jobDir, twinId, frames) {
     engine: "demo",
     photoreal: false,
     show_photo_orbit: true,
-    default_view: "3d",
+    default_view: "video",
     recommended_engine: "nerfstudio splatfacto or LongSplat (needs CUDA GPU)",
-    note: panoramaReady
-      ? "Continuous panoramic twin from glasses frames. Photoreal free-roam 3D Gaussian Splatting needs a CUDA GPU + TWIN_ENGINE=nerfstudio."
-      : "Walkthrough ready. Install ffmpeg for panoramic twin export. Photoreal 3DGS needs CUDA + Nerfstudio.",
+    note: videoReady
+      ? "Digital Capture ready — play the walk-through or look around full photos. Photoreal free-roam 3DGS needs CUDA + TWIN_ENGINE=nerfstudio."
+      : "Capture frames ready. Install ffmpeg for walk-through video export.",
   });
   saveStatus(jobDir, {
     status: "READY",
     progress: 100,
-    current_step: panoramaReady ? "Continuous panoramic twin ready" : (videoReady ? "3D twin + walkthrough ready" : "Walkthrough twin ready"),
+    current_step: videoReady ? "Digital capture ready" : (panoramaReady ? "Capture frames ready" : "Capture processing complete"),
     frame_count: frames.length,
     export: { ...ply, video: videoReady ? videoPath : null, panorama: panoramaReady ? panoramaPath : null },
     viewer_url: `/twin-viewer.html?id=${encodeURIComponent(twinId)}`,
@@ -456,7 +456,7 @@ function createTwinJob({ title, description, videoDataUrl, videoFrames, device, 
   const meta = {
     twin_id: twinId,
     title: title || `Lab twin ${twinId}`,
-    description: description || "Digital twin from AI-glasses walk-through",
+    description: description || "Digital capture from AI-glasses walk-through",
     lab_name: labName || "Telecom Lab",
     device: device || "ray-ban",
     session_id: sessionId || "",
@@ -485,16 +485,56 @@ function listTwins() {
   ensureRoot();
   return fs.readdirSync(TWIN_ROOT)
     .filter(name => name.startsWith("TWIN-") && fs.statSync(path.join(TWIN_ROOT, name)).isDirectory())
-    .map(name => readJson(path.join(TWIN_ROOT, name, "status.json"), { twin_id: name, status: "UNKNOWN" }))
+    .map(name => {
+      const status = readJson(path.join(TWIN_ROOT, name, "status.json"), { twin_id: name, status: "UNKNOWN" });
+      return { ...status, ...twinMediaLinks(name) };
+    })
     .sort((a, b) => String(b.twin_id).localeCompare(String(a.twin_id)));
+}
+
+function fileExists(...parts) {
+  return fs.existsSync(path.join(...parts));
+}
+
+function twinMediaLinks(twinId) {
+  const jobDir = twinPath(twinId);
+  const exportsDir = path.join(jobDir, "exports");
+  const hasSource = fileExists(jobDir, "input", "capture.mp4");
+  const hasWalk = fileExists(exportsDir, "walkthrough.mp4");
+  const hasProcessedVideo = fileExists(exportsDir, "processed.mp4");
+  const hasPly = fileExists(exportsDir, "point_cloud.ply");
+  const hasSplat = fileExists(exportsDir, "scene.splat") || fileExists(exportsDir, "scene.ksplat");
+  const splatName = fileExists(exportsDir, "scene.splat") ? "scene.splat"
+    : fileExists(exportsDir, "scene.ksplat") ? "scene.ksplat" : "";
+  const hasZip = fileExists(exportsDir, "processed.zip");
+  const processedMeta = readJson(path.join(exportsDir, "processed.json"), null);
+  return {
+    download_mp4_url: hasSource || hasWalk
+      ? `/api/twins/${twinId}/download/mp4`
+      : "",
+    download_source_url: hasSource ? `/api/twins/${twinId}/download/source` : "",
+    download_walkthrough_url: hasWalk ? `/api/twins/${twinId}/download/walkthrough` : "",
+    upload_processed_url: `/api/twins/${twinId}/processed`,
+    processed: {
+      ...(processedMeta || {}),
+      video_url: hasProcessedVideo ? `/api/twins/${twinId}/exports/processed.mp4` : "",
+      ply_url: hasPly ? `/api/twins/${twinId}/exports/point_cloud.ply` : "",
+      splat_url: splatName ? `/api/twins/${twinId}/exports/${splatName}` : "",
+      zip_url: hasZip ? `/api/twins/${twinId}/exports/processed.zip` : "",
+      has_processed: Boolean(hasProcessedVideo || splatName || (processedMeta?.uploaded_at && hasPly)),
+    },
+  };
 }
 
 function getTwin(twinId) {
   if (!/^TWIN-[\w-]+$/.test(twinId)) throw new Error("Invalid twin id");
   const jobDir = twinPath(twinId);
   if (!fs.existsSync(jobDir)) throw new Error("Twin not found");
+  const status = readJson(path.join(jobDir, "status.json"), {});
+  const media = twinMediaLinks(twinId);
   return {
-    ...readJson(path.join(jobDir, "status.json"), {}),
+    ...status,
+    ...media,
     manifest: readJson(path.join(jobDir, "manifest.json")),
     job: readJson(path.join(jobDir, "input", "job.json")),
     viewer: readJson(path.join(jobDir, "exports", "viewer.json")),
@@ -561,6 +601,107 @@ function resolveFrameFile(twinId, fileName) {
   return full;
 }
 
+function resolveDownloadFile(twinId, kind = "mp4") {
+  if (!/^TWIN-[\w-]+$/.test(twinId)) throw new Error("Invalid twin id");
+  const jobDir = twinPath(twinId);
+  if (!fs.existsSync(jobDir)) throw new Error("Twin not found");
+  const source = path.join(jobDir, "input", "capture.mp4");
+  const walk = path.join(jobDir, "exports", "walkthrough.mp4");
+  if (kind === "source") {
+    if (!fs.existsSync(source)) throw new Error("Source MP4 not found — upload a walk-through video first");
+    return { file: source, downloadName: `${twinId}-source.mp4` };
+  }
+  if (kind === "walkthrough") {
+    if (!fs.existsSync(walk)) throw new Error("Walkthrough MP4 not found yet");
+    return { file: walk, downloadName: `${twinId}-walkthrough.mp4` };
+  }
+  // Prefer original capture for offline Nerfstudio / real twin training
+  if (fs.existsSync(source)) return { file: source, downloadName: `${twinId}-capture.mp4` };
+  if (fs.existsSync(walk)) return { file: walk, downloadName: `${twinId}-walkthrough.mp4` };
+  throw new Error("No MP4 available to download yet");
+}
+
+function uploadProcessedAsset(twinId, { dataUrl, filename = "", label = "" } = {}) {
+  if (!/^TWIN-[\w-]+$/.test(twinId)) throw new Error("Invalid twin id");
+  const jobDir = twinPath(twinId);
+  if (!fs.existsSync(jobDir)) throw new Error("Twin not found");
+  const { mime, buffer } = decodeDataUrl(dataUrl);
+  if (!buffer.length) throw new Error("Processed file is empty");
+  if (buffer.length > 400 * 1024 * 1024) throw new Error("Processed file too large (max ~400MB)");
+
+  const exportsDir = path.join(jobDir, "exports");
+  fs.mkdirSync(exportsDir, { recursive: true });
+  const nameHint = String(filename || label || "").toLowerCase();
+  let kind = "binary";
+  let outName = "processed.bin";
+  if (mime.includes("mp4") || nameHint.endsWith(".mp4") || mime.includes("video")) {
+    kind = "video";
+    outName = "processed.mp4";
+  } else if (mime.includes("zip") || nameHint.endsWith(".zip")) {
+    kind = "zip";
+    outName = "processed.zip";
+  } else if (nameHint.endsWith(".ksplat") || nameHint.includes("ksplat")) {
+    kind = "splat";
+    outName = "scene.ksplat";
+  } else if (nameHint.endsWith(".splat") || mime.includes("octet-stream") && nameHint.includes("splat")) {
+    kind = "splat";
+    outName = "scene.splat";
+  } else if (nameHint.endsWith(".ply") || mime.includes("ply") || mime.includes("octet-stream")) {
+    kind = "ply";
+    outName = "point_cloud.ply";
+  } else if (nameHint.endsWith(".glb") || nameHint.endsWith(".gltf")) {
+    kind = "model";
+    outName = nameHint.endsWith(".gltf") ? "processed.gltf" : "processed.glb";
+  } else {
+    throw new Error("Unsupported processed file. Upload MP4, PLY, SPLAT/KSPLAT, GLB, or ZIP.");
+  }
+
+  const outPath = path.join(exportsDir, outName);
+  fs.writeFileSync(outPath, buffer);
+
+  const processedMeta = {
+    twin_id: twinId,
+    kind,
+    filename: outName,
+    original_name: String(filename || outName).slice(0, 180),
+    mime,
+    bytes: buffer.length,
+    uploaded_at: new Date().toISOString(),
+    label: String(label || "Offline real digital twin").slice(0, 120),
+  };
+  writeJsonSafe(path.join(exportsDir, "processed.json"), processedMeta);
+
+  const viewer = readJson(path.join(exportsDir, "viewer.json"), { twin_id: twinId }) || { twin_id: twinId };
+  viewer.photoreal = kind === "ply" || kind === "splat" || kind === "model";
+  viewer.processed = true;
+  viewer.processed_kind = kind;
+  if (kind === "video") viewer.processed_video_url = `/api/twins/${twinId}/exports/processed.mp4`;
+  if (kind === "ply") viewer.splat_url = `/api/twins/${twinId}/exports/point_cloud.ply`;
+  if (kind === "splat") viewer.splat_url = `/api/twins/${twinId}/exports/${outName}`;
+  if (kind === "zip") viewer.processed_zip_url = `/api/twins/${twinId}/exports/processed.zip`;
+  if (kind === "model") viewer.processed_model_url = `/api/twins/${twinId}/exports/${outName}`;
+  viewer.note = `Offline processed ${kind} uploaded. Open processed file or viewer to review the real digital twin output.`;
+  writeJsonSafe(path.join(exportsDir, "viewer.json"), viewer);
+
+  saveStatus(jobDir, {
+    status: "READY",
+    progress: 100,
+    current_step: `Processed ${kind} uploaded — real digital twin ready`,
+    processed: true,
+    processed_kind: kind,
+    processed_file: outName,
+    engine: kind === "ply" || kind === "splat" ? "offline-3dgs" : (kind === "video" ? "offline-video" : "offline-processed"),
+  });
+
+  return {
+    twin_id: twinId,
+    ...processedMeta,
+    ...twinMediaLinks(twinId),
+    viewer_url: `/twin-viewer.html?id=${encodeURIComponent(twinId)}`,
+    spoken_summary: `Processed ${kind} saved on ${twinId}. Open the processed file link to review.`,
+  };
+}
+
 module.exports = {
   TWIN_ROOT,
   TWIN_ENGINE,
@@ -572,6 +713,9 @@ module.exports = {
   saveOverlays,
   resolveExportFile,
   resolveFrameFile,
+  resolveDownloadFile,
+  uploadProcessedAsset,
+  twinMediaLinks,
   processTwinJob,
   ensureRoot,
 };

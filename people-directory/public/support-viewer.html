@@ -83,6 +83,10 @@
     let evidenceTimer = null;
     let frameWatchTimer = null;
     let signalingChain = Promise.resolve();
+    let speechRecognition = null;
+    let speechActive = false;
+    let lastTranscriptPost = "";
+    let lastTranscriptAt = 0;
     const MAX_EVIDENCE_FRAMES = 40;
     const EVIDENCE_INTERVAL_MS = 500;
 
@@ -259,9 +263,16 @@
 
       pc = new RTCPeerConnection({ iceServers, iceCandidatePoolSize: 2 });
 
-      // Expert side: mic only by default. PC webcam used to fill the screen and hide glasses video.
+      // Expert side: mic only. Echo cancellation avoids hearing yourself on the laptop speakers.
       try {
-        localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+        localStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+            autoGainControl: true,
+          },
+          video: false,
+        });
         localStream.getTracks().forEach((t) => pc.addTrack(t, localStream));
       } catch {
         localStream = null;
@@ -301,6 +312,7 @@
             showControls(true);
             attachGlassesStream();
             startEvidenceCapture();
+            startSpeechTranscription();
             startFrameWatch();
             break;
           case "checking":
@@ -335,14 +347,22 @@
       remoteStream.getAudioTracks().forEach((t) => { t.enabled = true; });
       remoteStream.getVideoTracks().forEach((t) => { t.enabled = true; });
 
-      const audioOnly = new MediaStream(remoteStream.getAudioTracks());
-      if (audioEl && audioOnly.getAudioTracks().length) {
+      const audioTracks = remoteStream.getAudioTracks();
+      const audioOnly = new MediaStream(audioTracks);
+      if (!audioTracks.length) {
+        console.warn("No remote audio tracks from glasses yet");
+        setStatus("Live · waiting for glasses mic…", "waiting");
+        showEnableAv(true, "Tap to enable sound");
+      } else if (audioEl) {
         if (audioEl.srcObject !== audioOnly) audioEl.srcObject = audioOnly;
         audioEl.muted = false;
         audioEl.volume = 1;
         try {
           await audioEl.play();
           showEnableAv(false);
+          if (pc && (pc.iceConnectionState === "connected" || pc.iceConnectionState === "completed")) {
+            setStatus("Live · glasses + mic", "connected");
+          }
         } catch (e) {
           console.warn("remote audio play blocked", e);
           showEnableAv(true, "Tap to enable sound");
@@ -358,6 +378,7 @@
       }
       document.getElementById("waiting-msg").style.display = "none";
       startEvidenceCapture();
+      startSpeechTranscription();
       startFrameWatch();
     }
 
@@ -447,6 +468,67 @@
       return evidenceFrames.slice(-MAX_EVIDENCE_FRAMES);
     }
 
+    function postTranscriptLine(text, sender) {
+      const cleaned = String(text || "").trim();
+      if (!cleaned) return;
+      const now = Date.now();
+      if (cleaned === lastTranscriptPost && now - lastTranscriptAt < 2500) return;
+      lastTranscriptPost = cleaned;
+      lastTranscriptAt = now;
+      try {
+        window.parent?.postMessage({ type: "lab-transcript-line", text: cleaned, sender: sender || "expert" }, "*");
+      } catch (e) {
+        console.warn("transcript post failed", e);
+      }
+    }
+
+    function startSpeechTranscription() {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SpeechRecognition || speechActive) return;
+      try {
+        speechRecognition = new SpeechRecognition();
+        speechRecognition.continuous = true;
+        speechRecognition.interimResults = false;
+        speechRecognition.lang = "en-US";
+        speechRecognition.onresult = (event) => {
+          for (let i = event.resultIndex; i < event.results.length; i += 1) {
+            const result = event.results[i];
+            if (!result?.isFinal) continue;
+            const text = String(result[0]?.transcript || "").trim();
+            if (!text) continue;
+            const micOn = localStream?.getAudioTracks?.()?.[0]?.enabled !== false;
+            // Mic on → expert speech; mic muted → likely field audio from speakers.
+            postTranscriptLine(text, micOn ? "expert" : "field");
+          }
+        };
+        speechRecognition.onerror = () => {
+          // Restart after transient errors while the call is live.
+          if (!speechActive) return;
+          setTimeout(() => {
+            try { speechRecognition?.start(); } catch (_) {}
+          }, 800);
+        };
+        speechRecognition.onend = () => {
+          if (!speechActive) return;
+          try { speechRecognition.start(); } catch (_) {}
+        };
+        speechActive = true;
+        speechRecognition.start();
+      } catch (e) {
+        console.warn("speech transcription unavailable", e);
+        speechActive = false;
+      }
+    }
+
+    function stopSpeechTranscription() {
+      speechActive = false;
+      if (speechRecognition) {
+        try { speechRecognition.onend = null; } catch (_) {}
+        try { speechRecognition.stop(); } catch (_) {}
+        speechRecognition = null;
+      }
+    }
+
     window.addEventListener("message", (event) => {
       const data = event.data || {};
       if (data.type === "lab-get-evidence-frames") {
@@ -531,6 +613,7 @@
     function cleanup() {
       clearTimeout(joinTimer);
       stopEvidenceCapture();
+      stopSpeechTranscription();
       stopFrameWatch();
       if (pc) { pc.close(); pc = null; }
       if (ws) { ws.close(); ws = null; }
