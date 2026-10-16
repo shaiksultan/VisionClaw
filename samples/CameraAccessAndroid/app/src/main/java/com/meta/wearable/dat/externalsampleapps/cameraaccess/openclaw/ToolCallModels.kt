@@ -114,8 +114,32 @@ object ToolDeclarations {
             .put(createEvidenceTicketJSON())
             .put(createDigitalTwinJSON())
             .put(requestExpertEngineerJSON())
+            .put(playMusicJSON())
+            .put(playFootballAudioJSON())
+            .put(stopAudioStreamJSON())
             .put(startMeetingJSON())
             .put(stopMeetingJSON())
+    }
+
+    private fun playMusicJSON(): JSONObject = JSONObject().apply {
+        put("name", "play_music")
+        put("description", "Start free music radio (audio only) from a public stream such as SomaFM. Use when the user says play music, start music, or Music Agent.")
+        put("parameters", JSONObject().put("type", "object").put("properties", JSONObject()))
+        put("behavior", "BLOCKING")
+    }
+
+    private fun playFootballAudioJSON(): JSONObject = JSONObject().apply {
+        put("name", "play_football_audio")
+        put("description", "Start free live football / sports radio (audio only) from a public sports radio stream. Use when the user says live football, football match audio, soccer commentary, or Football Agent. Audio only — no video.")
+        put("parameters", JSONObject().put("type", "object").put("properties", JSONObject()))
+        put("behavior", "BLOCKING")
+    }
+
+    private fun stopAudioStreamJSON(): JSONObject = JSONObject().apply {
+        put("name", "stop_audio_stream")
+        put("description", "Stop the currently playing music or football audio stream. Use when the user says stop music, stop football, stop radio, or stop the stream.")
+        put("parameters", JSONObject().put("type", "object").put("properties", JSONObject()))
+        put("behavior", "BLOCKING")
     }
 
     private fun requestExpertEngineerJSON(): JSONObject = JSONObject().apply {

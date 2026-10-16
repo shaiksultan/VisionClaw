@@ -589,7 +589,7 @@ function liveChatMarkup(view = currentView, opts = {}) {
           <div class="msg-meta">${esc(label)}</div>
           <div class="msg-bubble assistant">
             <div class="msg-text">${view === "chat"
-              ? "Hi — I am UAELAB AI Assistant. Ask “how can you help” for the full agent list, or try a ticket table, bar chart, or inventory lookup."
+              ? "Hi — I am LAB AI Assistant. How can I help?"
               : `Hi — I’m ${esc(label)}. Ask about this workflow.`}</div>
           </div>
         </div>
@@ -1447,7 +1447,7 @@ function supportTicketRow(call) {
 
 function supportChatBubble(msg) {
   const sender = String(msg.sender || "system").toLowerCase();
-  return `<article class="chat-bubble ${esc(sender)}"><div class="chat-meta">${esc(msg.sender)} · ${esc(formatLogTime(msg.created_at))}</div>${esc(msg.message)}</article>`;
+  return `<p class="call-chat-line ${esc(sender)}"><span class="call-chat-meta">${esc(msg.sender)} · ${esc(formatLogTime(msg.created_at))}</span> ${esc(msg.message)}</p>`;
 }
 
 function supportVideoStatus(call) {
@@ -1497,7 +1497,7 @@ function supportLivePanel(call, messages = []) {
     </div>
     <aside class="call-side">
       <h3>Call chat</h3>
-      <div class="support-chat" id="supportChat">${messages.map(supportChatBubble).join("") || '<p class="muted">No messages yet.</p>'}</div>
+      <div class="support-chat" id="supportChat">${messages.map(supportChatBubble).join("") || '<p class="call-chat-line">No messages yet.</p>'}</div>
       <form class="support-chat-input" id="supportChatForm">
         <input id="supportChatInput" placeholder="Message the field engineer…" autocomplete="off">
         <button class="primary compact" type="submit">Send</button>
@@ -1655,7 +1655,7 @@ function updateSupportSoft() {
   const frame = $("#supportVideoFrame");
   const chat = $("#supportChat");
   if (active.messages && chat) {
-    chat.innerHTML = active.messages.map(supportChatBubble).join("") || '<p class="muted">No messages yet.</p>';
+    chat.innerHTML = active.messages.map(supportChatBubble).join("") || '<p class="call-chat-line">No messages yet.</p>';
     chat.scrollTop = chat.scrollHeight;
   }
 

@@ -11,7 +11,6 @@ package com.meta.wearable.dat.externalsampleapps.cameraaccess.ui
 import android.widget.Toast
 import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -24,14 +23,11 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.LinkOff
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Smartphone
-import androidx.compose.material.icons.filled.Videocam
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -49,7 +45,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -79,7 +74,6 @@ fun NonStreamScreen(
     val isDisconnectEnabled = uiState.registrationState is RegistrationState.Registered
     val activity = LocalActivity.current
     val context = LocalContext.current
-    val scrollState = rememberScrollState()
 
     Box(
         modifier = modifier
@@ -89,30 +83,27 @@ fun NonStreamScreen(
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .verticalScroll(scrollState)
                 .systemBarsPadding()
                 .navigationBarsPadding()
-                .padding(horizontal = 20.dp)
+                .padding(horizontal = 22.dp)
                 .padding(bottom = 20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Column {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    BrandOrbLogo(size = 36.dp)
                     Text(
-                        text = "LAB VISION AI",
-                        color = LabVisionColors.Accent,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        letterSpacing = 1.4.sp,
-                    )
-                    Text(
-                        text = "Ready to stream",
+                        text = "UAELAB Vision",
                         color = LabVisionColors.TextPrimary,
-                        fontSize = 22.sp,
-                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.SemiBold,
                     )
                 }
                 Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -159,75 +150,20 @@ fun NonStreamScreen(
                 }
             }
 
-            Spacer(modifier = Modifier.height(18.dp))
+            Spacer(modifier = Modifier.height(10.dp))
+
+            AgentNameLabels(modifier = Modifier.fillMaxWidth())
 
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(20.dp))
-                    .background(LabVisionColors.Surface.copy(alpha = 0.92f))
-                    .border(1.dp, LabVisionColors.SurfaceElevated, RoundedCornerShape(20.dp))
-                    .padding(18.dp),
+                    .weight(1f, fill = true),
+                contentAlignment = Alignment.Center,
             ) {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Box(
-                            modifier = Modifier
-                                .size(48.dp)
-                                .clip(RoundedCornerShape(14.dp))
-                                .background(
-                                    Brush.linearGradient(
-                                        listOf(LabVisionColors.Accent, LabVisionColors.AccentMuted),
-                                    ),
-                                ),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(
-                                text = "AI",
-                                color = LabVisionColors.BackgroundTop,
-                                fontWeight = FontWeight.Bold,
-                                fontSize = 16.sp,
-                            )
-                        }
-                        Column {
-                            Text(
-                                text = stringResource(R.string.non_stream_screen_title),
-                                color = LabVisionColors.TextPrimary,
-                                fontSize = 17.sp,
-                                fontWeight = FontWeight.SemiBold,
-                            )
-                            Text(
-                                text = if (uiState.hasActiveDevice) {
-                                    "Glasses connected · choose how to start"
-                                } else {
-                                    stringResource(R.string.waiting_for_active_device)
-                                },
-                                color = LabVisionColors.TextSecondary,
-                                fontSize = 13.sp,
-                            )
-                        }
-                    }
-                    Text(
-                        text = stringResource(R.string.non_stream_screen_description),
-                        color = LabVisionColors.TextSecondary,
-                        fontSize = 13.sp,
-                        lineHeight = 18.sp,
-                    )
-                }
+                AnimatedOrb()
             }
 
-            Spacer(modifier = Modifier.height(22.dp))
-
-            AgentShowcaseHeader(
-                title = "MISSION AGENTS",
-                subtitle = "Voice-ready agents available once you start streaming. Showcase only — no action yet.",
-            )
-
             Spacer(modifier = Modifier.height(12.dp))
-
-            AgentShowcaseGrid()
-
-            Spacer(modifier = Modifier.height(22.dp))
 
             if (!uiState.hasActiveDevice) {
                 Text(
@@ -244,7 +180,7 @@ fun NonStreamScreen(
                 onClick = { viewModel.navigateToStreaming(onRequestWearablesPermission) },
                 enabled = uiState.hasActiveDevice,
                 accent = true,
-                leadingIcon = Icons.Default.Videocam,
+                leadingIconRes = R.drawable.smart_glasses_icon,
             )
 
             Spacer(modifier = Modifier.height(10.dp))
@@ -287,6 +223,7 @@ private fun GettingStartedSheetContent(onContinue: () -> Unit, modifier: Modifie
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
+        BrandOrbLogo(size = 64.dp)
         Text(
             text = stringResource(R.string.getting_started_title),
             color = LabVisionColors.TextPrimary,

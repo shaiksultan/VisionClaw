@@ -10,6 +10,8 @@ object AgentRouter {
     const val SUPPORT = "support"
     const val AB_TWIN = "ab-twin"
     const val VISUAL = "visual"
+    const val MUSIC = "music"
+    const val FOOTBALL = "football"
 
     fun fromToolName(toolName: String): String {
         val name = toolName.lowercase()
@@ -21,6 +23,9 @@ object AgentRouter {
             name.contains("evidence_ticket") || name.contains("ticket") -> TICKETS
             name.contains("expert_engineer") || name.contains("support") -> SUPPORT
             name.contains("digital_twin") || name.contains("twin") -> AB_TWIN
+            name.contains("play_music") || name == "music" -> MUSIC
+            name.contains("football") || name.contains("soccer") -> FOOTBALL
+            name.contains("stop_audio") -> CHAT
             else -> CHAT
         }
     }
@@ -28,6 +33,8 @@ object AgentRouter {
     fun fromUtterance(text: String): String? {
         val t = text.lowercase()
         return when {
+            Regex("""\b(play\s+music|music\s+agent|listen to music|start music)\b""").containsMatchIn(t) -> MUSIC
+            Regex("""\b(football|soccer|premier league|live\s+match|match\s+audio|sports\s+radio)\b""").containsMatchIn(t) -> FOOTBALL
             Regex("""\b(ticket|evidence|screenshot|incident|fault)\b""").containsMatchIn(t) -> TICKETS
             Regex("""\b(inventory|stock|equipment|add item|where is)\b""").containsMatchIn(t) -> INVENTORY
             Regex("""\b(knowledge|procedure|runbook|documentation)\b""").containsMatchIn(t) -> KNOWLEDGE
@@ -35,7 +42,6 @@ object AgentRouter {
             Regex("""\b(lab expert engineer|expert engineer|remote support|live (help|call|support))\b""").containsMatchIn(t) -> SUPPORT
             Regex("""\b(mobile ps|lab test|run test|test cycle)\b""").containsMatchIn(t) -> TESTS
             Regex("""\b(troubleshoot|alarm|what.?s wrong|analyze (the )?screen)\b""").containsMatchIn(t) -> VISUAL
-            // Capability questions stay on UAELAB AI Assistant (full roster).
             Regex("""\b(how can (you|u)|who are you|list agents|what can you do)\b""").containsMatchIn(t) -> CHAT
             else -> null
         }
@@ -43,5 +49,5 @@ object AgentRouter {
 
     fun displayName(agentId: String): String =
         LabAgentCatalog.firstOrNull { it.id == agentId }?.title
-            ?: if (agentId == CHAT) "UAELAB AI Assistant" else agentId
+            ?: if (agentId == CHAT) "LAB AI Assistant" else agentId
 }

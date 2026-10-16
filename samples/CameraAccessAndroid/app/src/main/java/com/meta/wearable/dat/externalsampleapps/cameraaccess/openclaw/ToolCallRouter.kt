@@ -19,6 +19,9 @@ class ToolCallRouter(
     private val createEvidenceTicket: suspend (Map<String, Any?>) -> ToolResult,
     private val createDigitalTwin: suspend (Map<String, Any?>) -> ToolResult,
     private val requestExpertEngineer: suspend (Map<String, Any?>) -> ToolResult,
+    private val playMusic: suspend () -> ToolResult,
+    private val playFootballAudio: suspend () -> ToolResult,
+    private val stopAudioStream: suspend () -> ToolResult,
     private val startMeeting: suspend (Map<String, Any?>) -> ToolResult,
     private val stopMeeting: suspend () -> ToolResult,
     /** Immediate local spoken feedback (TTS) so the user hears "hold on" right away. */
@@ -33,6 +36,8 @@ class ToolCallRouter(
             "create_digital_twin",
             "start_lab_test",
             "request_expert_engineer",
+            "play_music",
+            "play_football_audio",
             "start_meeting_recording",
             "stop_meeting_recording",
             "execute",
@@ -117,6 +122,18 @@ class ToolCallRouter(
                     bridge.setToolCallStatus(ToolCallStatus.Executing("Hold on — starting Expert Engineer call…"))
                     requestExpertEngineer(call.args)
                 }
+                "play_music" -> {
+                    bridge.setToolCallStatus(ToolCallStatus.Executing("Hold on — connecting free music radio…"))
+                    playMusic()
+                }
+                "play_football_audio" -> {
+                    bridge.setToolCallStatus(ToolCallStatus.Executing("Hold on — connecting live football audio…"))
+                    playFootballAudio()
+                }
+                "stop_audio_stream" -> {
+                    bridge.setToolCallStatus(ToolCallStatus.Executing("Stopping audio…"))
+                    stopAudioStream()
+                }
                 "start_meeting_recording" -> {
                     bridge.setToolCallStatus(ToolCallStatus.Executing("Hold on — starting meeting recording…"))
                     startMeeting(call.args)
@@ -199,6 +216,10 @@ class ToolCallRouter(
                 "Hold on — saving the meeting and preparing minutes."
             "add_inventory_item" ->
                 "Hold on — adding that item to inventory."
+            "play_music" ->
+                "Hold on — connecting free music radio."
+            "play_football_audio" ->
+                "Hold on — connecting live football audio."
             "execute" ->
                 "Hold on — working on that request."
             else ->

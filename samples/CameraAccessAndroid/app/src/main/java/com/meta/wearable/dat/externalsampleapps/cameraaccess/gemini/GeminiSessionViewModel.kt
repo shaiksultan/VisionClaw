@@ -20,6 +20,8 @@ import com.meta.wearable.dat.externalsampleapps.cameraaccess.twin.TwinClient
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.support.SupportCallClient
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.support.SupportSessionBridge
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.ToolResult
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.media.AudioStreamPlayer
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.media.StreamKind
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.ui.AgentRouter
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -221,6 +223,17 @@ class GeminiSessionViewModel(application: Application) : AndroidViewModel(applic
                     )
                 },
                 requestExpertEngineer = { args -> requestExpertEngineer(args) },
+                playMusic = {
+                    val msg = AudioStreamPlayer.play(getApplication(), StreamKind.MUSIC)
+                    if (msg.startsWith("Playing")) ToolResult.Success(msg) else ToolResult.Failure(msg)
+                },
+                playFootballAudio = {
+                    val msg = AudioStreamPlayer.play(getApplication(), StreamKind.FOOTBALL)
+                    if (msg.startsWith("Playing")) ToolResult.Success(msg) else ToolResult.Failure(msg)
+                },
+                stopAudioStream = {
+                    ToolResult.Success(AudioStreamPlayer.stop())
+                },
                 startMeeting = { args -> startMeetingRecording(args) },
                 stopMeeting = { stopMeetingRecording() },
                 announce = { line -> voiceAnnouncer.speak(line) },
@@ -323,10 +336,9 @@ class GeminiSessionViewModel(application: Application) : AndroidViewModel(applic
                     if (_uiState.value.connectionState != GeminiConnectionState.Ready) return@launch
                     delay(400)
                     geminiService.sendTextMessage(
-                        "[System] Session just started. Speak first now as the UAELAB and Technology Innovation Agent. " +
-                            "Introduce yourself by that exact name, briefly say how you can help with lab inventory, " +
-                            "procedures and knowledge, evidence tickets, Expert Engineer live support, autonomous lab tests, " +
-                            "and digital captures, then ask how you can help. Keep it to a few short sentences. Do not call tools yet.",
+                        "[System] Session just started. Speak first now as LAB AI Assistant. " +
+                            "Say only: I am LAB AI Assistant. How can I help? " +
+                            "Do not list agents. Do not call tools yet.",
                     )
                 }
 
@@ -348,6 +360,7 @@ class GeminiSessionViewModel(application: Application) : AndroidViewModel(applic
         eventClient.disconnect()
         toolCallRouter?.cancelAll()
         toolCallRouter = null
+        AudioStreamPlayer.stop()
         voiceAnnouncer.stop()
         viewModelScope.launch { labDemoClient.disconnect() }
         audioManager.stopCapture()

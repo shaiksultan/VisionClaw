@@ -13,15 +13,17 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.OutlinedTextField
@@ -40,11 +42,16 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -204,7 +211,11 @@ fun StreamScreen(
         }
     }
 
-    Box(modifier = modifier.fillMaxSize()) {
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(LabVisionColors.BackgroundTop),
+    ) {
         // Video feed
         streamUiState.videoFrame?.let { videoFrame ->
             Image(
@@ -213,11 +224,53 @@ fun StreamScreen(
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop,
             )
+        } ?: run {
+            // Waiting for first frame — same dark theme as home/stream select
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(LabVisionBackgroundBrush),
+                contentAlignment = Alignment.Center,
+            ) {
+                AnimatedOrb(modifier = Modifier.fillMaxWidth(0.7f))
+            }
         }
+
+        // Soft bottom fade so controls match app chrome
+        Box(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .height(220.dp)
+                .background(
+                    Brush.verticalGradient(
+                        colors = listOf(Color.Transparent, LabVisionColors.BackgroundTop.copy(alpha = 0.85f)),
+                    ),
+                ),
+        )
 
         if (streamUiState.streamSessionState == StreamSessionState.STARTING) {
             CircularProgressIndicator(
                 modifier = Modifier.align(Alignment.Center),
+                color = LabVisionColors.AccentBright,
+            )
+        }
+
+        // Mode chip top
+        Box(
+            modifier = Modifier
+                .align(Alignment.TopCenter)
+                .statusBarsPadding()
+                .padding(top = 10.dp)
+                .clip(RoundedCornerShape(999.dp))
+                .background(LabVisionColors.SurfaceCard.copy(alpha = 0.88f))
+                .padding(horizontal = 14.dp, vertical = 7.dp),
+        ) {
+            Text(
+                text = if (isPhoneMode) "Phone live" else "Glasses live",
+                color = LabVisionColors.AccentBright,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
             )
         }
 
@@ -238,7 +291,7 @@ fun StreamScreen(
         // Overlays + controls
         Box(modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp)) {
             // Top overlays (below status bar)
-            Column(modifier = Modifier.align(Alignment.TopStart).statusBarsPadding().padding(top = 8.dp)) {
+            Column(modifier = Modifier.align(Alignment.TopStart).statusBarsPadding().padding(top = 44.dp)) {
                 // Compact AI overlay (kept light so Expert Engineer / WebRTC video stays clear)
                 if (geminiUiState.isGeminiActive && !webrtcUiState.isActive) {
                     GeminiOverlay(uiState = geminiUiState)
@@ -251,7 +304,7 @@ fun StreamScreen(
                 }
             }
 
-            // Controls at bottom
+            // Controls at bottom — same card/button language as Start on Glasses / Phone
             ControlsRow(
                 onStopStream = {
                     if (geminiUiState.isGeminiActive) geminiViewModel.stopSession()

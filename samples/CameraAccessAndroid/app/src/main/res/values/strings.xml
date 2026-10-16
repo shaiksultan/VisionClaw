@@ -1,15 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:xliff="urn:oasis:names:tc:xliff:document:1.2" project="cameraaccess">
-    <string name="app_name">LAB Vision AI</string>
+    <string name="app_name">UAELAB Vision</string>
 
     <!-- Splash -->
-    <string name="splash_title">LAB VISION AI</string>
+    <string name="splash_title">UAELAB VISION</string>
     <string name="splash_subtitle">Voice-first intelligence for telecom lab workflows</string>
     <string name="splash_tagline">Inventory · Knowledge · Troubleshooting · Lab Tests · Evidence · Remote Support</string>
 
     <!-- Home Screen -->
-    <string name="home_brand_title">LAB VISION AI</string>
-    <string name="home_brand_subtitle">Connect Ray-Ban Meta glasses and run professional telecom lab agents by voice.</string>
+    <string name="home_brand_title">UAELAB VISION</string>
+    <string name="home_brand_subtitle">Connect Ray-Ban Meta glasses or this phone and run professional telecom lab agents by voice.</string>
     <string name="home_capabilities_title">MISSION AGENTS</string>
     <string name="home_demo_inventory">Lab Inventory</string>
     <string name="home_demo_knowledge">Lab Knowledge</string>
@@ -18,9 +18,9 @@
     <string name="home_demo_tickets">Evidence Tickets</string>
     <string name="home_demo_support">Expert Engineer</string>
     <string name="home_phone_mode_button">Start on Phone</string>
-    <string name="register_button_title" description="Connect App">Connect my glasses</string>
+    <string name="register_button_title" description="Connect App">Connect glasses</string>
     <string name="unregister_button_title" description="Disconnect App">Disconnect</string>
-    <string name="stream_button_title" description="Start streaming">Start streaming</string>
+    <string name="stream_button_title" description="Start on glasses">Start on Glasses</string>
     <string name="stop_stream_button_title" description="Stop streaming">Stop streaming</string>
     <string name="home_tip_video_title" description="Tip title about video capture">Video Capture</string>
     <string name="home_tip_audio_title" description="Tip title about audio">Open-Ear Audio</string>

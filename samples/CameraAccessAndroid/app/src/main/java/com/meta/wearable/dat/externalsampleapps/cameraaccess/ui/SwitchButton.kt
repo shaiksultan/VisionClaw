@@ -8,6 +8,7 @@
 
 package com.meta.wearable.dat.externalsampleapps.cameraaccess.ui
 
+import androidx.annotation.DrawableRes
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -22,8 +23,8 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -38,8 +39,34 @@ fun SwitchButton(
     accent: Boolean = false,
     outlined: Boolean = false,
     leadingIcon: ImageVector? = null,
+    @DrawableRes leadingIconRes: Int? = null,
 ) {
     val shape = RoundedCornerShape(16.dp)
+    val iconTint = if (accent && !outlined) LabVisionColors.TextPrimary else LabVisionColors.Accent
+
+    @Composable
+    fun LeadingIcon() {
+        when {
+            leadingIconRes != null -> {
+                Icon(
+                    painter = painterResource(id = leadingIconRes),
+                    contentDescription = null,
+                    modifier = Modifier.size(20.dp),
+                    tint = iconTint,
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+            }
+            leadingIcon != null -> {
+                Icon(
+                    imageVector = leadingIcon,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                    tint = iconTint,
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+            }
+        }
+    }
 
     if (outlined) {
         OutlinedButton(
@@ -53,10 +80,7 @@ fun SwitchButton(
                 disabledContentColor = LabVisionColors.TextSecondary.copy(alpha = 0.45f),
             ),
         ) {
-            if (leadingIcon != null) {
-                Icon(leadingIcon, contentDescription = null, modifier = Modifier.size(18.dp), tint = LabVisionColors.Accent)
-                Spacer(modifier = Modifier.width(8.dp))
-            }
+            LeadingIcon()
             Text(label, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
         }
         return
@@ -69,28 +93,20 @@ fun SwitchButton(
         colors = ButtonDefaults.buttonColors(
             containerColor = when {
                 isDestructive -> AppColor.DestructiveBackground
-                accent -> LabVisionColors.Accent
+                accent -> LabVisionColors.AccentMuted
                 else -> LabVisionColors.SurfaceElevated
             },
             disabledContainerColor = LabVisionColors.SurfaceElevated.copy(alpha = 0.45f),
             disabledContentColor = LabVisionColors.TextSecondary.copy(alpha = 0.5f),
             contentColor = when {
                 isDestructive -> AppColor.DestructiveForeground
-                accent -> LabVisionColors.BackgroundTop
+                accent -> LabVisionColors.TextPrimary
                 else -> LabVisionColors.TextPrimary
             },
         ),
         enabled = enabled,
     ) {
-        if (leadingIcon != null) {
-            Icon(
-                leadingIcon,
-                contentDescription = null,
-                modifier = Modifier.size(18.dp),
-                tint = if (accent) LabVisionColors.BackgroundTop else LabVisionColors.Accent,
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-        }
+        LeadingIcon()
         Text(label, fontWeight = FontWeight.SemiBold, fontSize = 15.sp)
     }
 }

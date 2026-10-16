@@ -61,6 +61,7 @@ import com.meta.wearable.dat.core.types.Permission
 import com.meta.wearable.dat.core.types.PermissionStatus
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.BuildConfig
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.lab.LabDemoClient
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.settings.SettingsManager
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.stream.StreamingMode
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.wearables.WearablesViewModel
 import kotlinx.coroutines.delay
@@ -76,10 +77,13 @@ fun CameraAccessScaffold(
   val snackbarHostState = remember { SnackbarHostState() }
   val bottomSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
   var showSplash by remember { mutableStateOf(true) }
+  var showOnboarding by remember {
+    mutableStateOf(!SettingsManager.onboardingCompleted)
+  }
   val presenceClient = remember { LabDemoClient() }
 
   LaunchedEffect(Unit) {
-    delay(2600)
+    delay(2200)
     showSplash = false
   }
 
@@ -158,6 +162,14 @@ fun CameraAccessScaffold(
 
         if (showSplash) {
           SplashScreen(modifier = Modifier.fillMaxSize())
+        } else if (showOnboarding) {
+          OnboardingScreen(
+              onFinished = {
+                SettingsManager.onboardingCompleted = true
+                showOnboarding = false
+              },
+              modifier = Modifier.fillMaxSize(),
+          )
         }
 
         SnackbarHost(

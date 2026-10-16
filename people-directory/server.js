@@ -188,27 +188,32 @@ function agentSpokenName(agent) {
   return agent.spokenName || agent.name;
 }
 
-/** Short voice-friendly roster — must include every specialist, especially Lab Expert Engineer. */
-function buildUaelabHelpReply() {
-  const lines = [
-    "I am UAELAB AI Assistant. I coordinate Lab AI Mission Control.",
-    "Here are all my agents:",
-    ...DEMO_AGENTS.map((a, i) => `${i + 1}. ${agentSpokenName(a)} — ${a.spokenHelp || a.routeDesc}.`),
-    `${DEMO_AGENTS.length + 1}. Mission Control — tickets, charts, tables, and routing.`,
-    "Tell me which agent you need, or ask your question.",
-  ];
-  return lines.join("\n");
+/** Short voice reply — no agent list unless the user explicitly asks to list agents. */
+function buildUaelabHelpReply(message = "") {
+  const lower = String(message || "").toLowerCase();
+  const wantsList = /\b(list|show|name|all)\b[\s\S]{0,40}\bagents?\b/.test(lower)
+    || /\bagents?\b[\s\S]{0,40}\b(list|available)\b/.test(lower);
+  if (wantsList) {
+    const lines = [
+      "I am LAB AI Assistant.",
+      "Available agents:",
+      ...DEMO_AGENTS.map((a, i) => `${i + 1}. ${agentSpokenName(a)} — ${a.spokenHelp || a.routeDesc}.`),
+      "How can I help?",
+    ];
+    return lines.join("\n");
+  }
+  return "I am LAB AI Assistant. How can I help?";
 }
 
 function handleAgentHelpChat(message) {
   if (!wantsAgentHelp(message)) return null;
-  const reply = buildUaelabHelpReply();
+  const reply = buildUaelabHelpReply(message);
   return {
     reply,
     spoken_summary: reply.replace(/\n+/g, " "),
     source: "local-help",
     agent: "chat",
-    agent_name: "UAELAB AI Assistant",
+    agent_name: "LAB AI Assistant",
     agents: DEMO_AGENTS.map(a => ({
       id: a.id,
       name: agentSpokenName(a),
@@ -482,7 +487,7 @@ async function askOpenClaw(message, context, history = [], agent = null) {
       "Stay in this agent role. Answer with this agent's specialty and local lab DB facts.",
       "UAELAB AI Assistant (Mission Control) coordinates agents; you are this specialist agent.",
       ...groundRules,
-      "If the user asks who you are / how you can help / to list agents, say you are part of UAELAB AI Assistant and list the full agent roster from the playbook.",
+      "If the user asks who you are / how you can help / what you can do, say briefly: I am LAB AI Assistant. How can I help? Do not list all agents unless they explicitly ask to list agents.",
       "If the user asks to switch agents, say which one and include a line exactly like: ACTION_VIEW:<id>",
       "Valid ACTION_VIEW ids: overview,dashboard,agents,inventory,knowledge,tests,mobile-ps,ab-twin,logs,tickets,support,kanban,chat.",
       labManagerPlaybookText(),
@@ -492,10 +497,10 @@ async function askOpenClaw(message, context, history = [], agent = null) {
       JSON.stringify(slimContext),
     ].join("\n")
     : [
-      "You are UAELAB AI Assistant (Mission Control / Lab Manager) for e& UAELAB Lab AI Mission Control.",
-      "Always introduce yourself as UAELAB AI Assistant when asked who you are, how you can help, or what agents exist.",
-      "You coordinate the specialist lab agents below. You understand each agent's purpose, when to use it, and how to open it.",
-      "When the user asks how you can help / what you can do / list agents: greet as UAELAB AI Assistant and list EVERY agent with a one-line purpose (do not skip any).",
+      "You are LAB AI Assistant (Mission Control / Lab Manager) for e& UAELAB Lab AI Mission Control.",
+      "When asked who you are, how you can help, or what you can do, reply briefly: I am LAB AI Assistant. How can I help?",
+      "Do NOT list all agents on capability questions. Only list agents if the user explicitly asks to list or show agents.",
+      "You can still route to specialist agents when the user asks for a specific task.",
       ...groundRules,
       "Route the operator: recommend the right agent, answer lab-wide questions yourself, or open a specialist with ACTION_VIEW:<id>.",
       labManagerPlaybookText(),
@@ -588,7 +593,7 @@ async function handleMissionChat(db, body = {}) {
   const openAction = resolveChatAction(message);
   if (openAction) return openAction;
 
-  // UAELAB AI Assistant intro + full agent roster (glasses: “how can you help”).
+  // LAB AI Assistant short intro (no agent list unless user asks to list agents).
   const helpReport = handleAgentHelpChat(message);
   if (helpReport) {
     if (scoped) {

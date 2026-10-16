@@ -17,7 +17,9 @@ import androidx.compose.material.icons.filled.ConfirmationNumber
 import androidx.compose.material.icons.filled.HeadsetMic
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.MenuBook
+import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Science
+import androidx.compose.material.icons.filled.SportsSoccer
 import androidx.compose.material.icons.filled.ViewInAr
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.Text
@@ -43,14 +45,16 @@ data class LabAgentUi(
 )
 
 val LabAgentCatalog: List<LabAgentUi> = listOf(
-    LabAgentUi("chat", "UAELAB AI Assistant", "Voice co-pilot · full agent roster", "AI", Icons.Filled.AutoAwesome, LabVisionColors.Accent),
-    LabAgentUi("inventory", "Lab Inventory Agent", "Locate gear & stock", "01", Icons.Filled.Inventory2, Color(0xFF7DD3A7)),
+    LabAgentUi("chat", "UAELAB AI Assistant", "Voice co-pilot · full agent roster", "AI", Icons.Filled.AutoAwesome, LabVisionColors.AccentBright),
+    LabAgentUi("inventory", "Lab Inventory Agent", "Locate gear & stock", "01", Icons.Filled.Inventory2, Color(0xFF5CE1FF)),
     LabAgentUi("knowledge", "Lab Knowledge Assistant", "Procedures & runbooks", "02", Icons.Filled.MenuBook, Color(0xFF8EC5FF)),
-    LabAgentUi("tests", "Mobile PS Agent", "Dual-UE packet core validation", "03", Icons.Filled.Science, Color(0xFFD9F06F)),
-    LabAgentUi("tickets", "Evidence Ticket Agent", "Screenshot & video proof", "04", Icons.Filled.ConfirmationNumber, Color(0xFFF0A8C8)),
-    LabAgentUi("support", "Lab Expert Engineer", "Live remote support call", "05", Icons.Filled.HeadsetMic, Color(0xFF6EE7B7)),
-    LabAgentUi("ab-twin", "Digital Capture Agent", "Walk-through digital capture", "06", Icons.Filled.ViewInAr, Color(0xFFA5B4FC)),
-    LabAgentUi("visual", "Visual Troubleshoot", "Analyze screens & alarms", "07", Icons.Filled.Visibility, Color(0xFFFFB86B)),
+    LabAgentUi("tests", "Mobile PS Agent", "Dual-UE packet core validation", "03", Icons.Filled.Science, Color(0xFF60A5FA)),
+    LabAgentUi("tickets", "Evidence Ticket Agent", "Screenshot & video proof", "04", Icons.Filled.ConfirmationNumber, Color(0xFFA78BFA)),
+    LabAgentUi("support", "Lab Expert Engineer", "Live remote support call", "05", Icons.Filled.HeadsetMic, Color(0xFF34D399)),
+    LabAgentUi("ab-twin", "Digital Capture Agent", "Walk-through digital capture", "06", Icons.Filled.ViewInAr, Color(0xFF818CF8)),
+    LabAgentUi("visual", "Visual Troubleshoot", "Analyze screens & alarms", "07", Icons.Filled.Visibility, Color(0xFFFBBF24)),
+    LabAgentUi("music", "Music Agent", "Free music radio · audio only", "08", Icons.Filled.MusicNote, Color(0xFFF472B6)),
+    LabAgentUi("football", "Football Agent", "Live football radio · audio only", "09", Icons.Filled.SportsSoccer, Color(0xFF4ADE80)),
 )
 
 @Composable
