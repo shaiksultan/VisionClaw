@@ -59,6 +59,8 @@ class WebRTCSessionViewModel(application: Application) : AndroidViewModel(applic
     private var reconnectJob: kotlinx.coroutines.Job? = null
     private var signalingGeneration = 0
     private var sessionGeneration = 0
+    /** True after ICE reaches Connected at least once in this support session. */
+    private var supportEverConnected = false
     var onRoomCreated: ((String) -> Unit)? = null
     /** Fired when the remote expert leaves while a support session is still active. */
     var onSupportPeerLeft: (() -> Unit)? = null
@@ -92,6 +94,7 @@ class WebRTCSessionViewModel(application: Application) : AndroidViewModel(applic
 
         reconnectAttempt = 0
         reconnectJob?.cancel()
+        supportEverConnected = false
         val generation = ++sessionGeneration
         _uiState.value = _uiState.value.copy(
             isActive = true,
@@ -335,6 +338,7 @@ class WebRTCSessionViewModel(application: Application) : AndroidViewModel(applic
         when (state) {
             PeerConnection.IceConnectionState.CONNECTED,
             PeerConnection.IceConnectionState.COMPLETED -> {
+                if (_uiState.value.isSupportMode) supportEverConnected = true
                 _uiState.value = _uiState.value.copy(
                     connectionState = WebRTCConnectionState.Connected,
                     errorMessage = null,
@@ -342,10 +346,12 @@ class WebRTCSessionViewModel(application: Application) : AndroidViewModel(applic
                 Log.d(TAG, "Peer connected")
             }
             PeerConnection.IceConnectionState.DISCONNECTED -> {
-                // Transient — do not tear down / renegotiate (that caused black screen regressions).
+                // Transient for normal WebRTC. After a live Expert Engineer call, PC hangup
+                // often skips peer_left — end cleanly instead of sticky "Waiting…".
                 _uiState.value = _uiState.value.copy(
                     connectionState = WebRTCConnectionState.WaitingForPeer
                 )
+                maybeEndSupportAfterIceDrop("disconnected")
             }
             PeerConnection.IceConnectionState.FAILED -> {
                 Log.w(TAG, "ICE failed")
@@ -355,6 +361,7 @@ class WebRTCSessionViewModel(application: Application) : AndroidViewModel(applic
                     hasRemoteVideo = false,
                     errorMessage = null,
                 )
+                maybeEndSupportAfterIceDrop("failed")
             }
             PeerConnection.IceConnectionState.CLOSED -> {
                 if (_uiState.value.isActive) {
@@ -364,6 +371,26 @@ class WebRTCSessionViewModel(application: Application) : AndroidViewModel(applic
                 }
             }
             else -> {}
+        }
+    }
+
+    private fun maybeEndSupportAfterIceDrop(reason: String) {
+        if (!supportEverConnected) return
+        if (!_uiState.value.isSupportMode || !_uiState.value.isActive) return
+        val generation = sessionGeneration
+        viewModelScope.launch {
+            kotlinx.coroutines.delay(if (reason == "failed") 1_000L else 2_500L)
+            val stillStuck = generation == sessionGeneration &&
+                _uiState.value.isActive &&
+                _uiState.value.isSupportMode &&
+                supportEverConnected &&
+                _uiState.value.connectionState is WebRTCConnectionState.WaitingForPeer &&
+                !_uiState.value.hasRemoteVideo
+            if (!stillStuck) return@launch
+            Log.d(TAG, "Support ICE $reason after connect — ending as peer left")
+            val callback = onSupportPeerLeft
+            stopSession()
+            callback?.invoke()
         }
     }
 

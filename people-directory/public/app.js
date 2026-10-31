@@ -1901,6 +1901,18 @@ function startSupportPoll() {
   }, 2500);
 }
 
+async function waitForSupportRoom(id, timeoutMs = 20000) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    await loadSupportCalls().catch(() => {});
+    const row = supportCalls.find(c => c.id === id);
+    const room = String(row?.room_code || "").trim();
+    if (room) return room;
+    await new Promise(r => setTimeout(r, 700));
+  }
+  return "";
+}
+
 async function acceptSupportCall(id) {
   const call = supportCalls.find(row => row.id === id) || { id };
   hideIncomingCall();
@@ -1919,7 +1931,13 @@ async function acceptSupportCall(id) {
   if (currentView !== "support") showView("support");
   await loadSupportCalls();
   await loadActiveSupportDetail();
-  const fresh = supportCalls.find(row => row.id === id);
+  let fresh = supportCalls.find(row => row.id === id);
+  if (!fresh?.room_code) {
+    toast("Call answered — waiting for glasses video room…");
+    const room = await waitForSupportRoom(id, 20000);
+    fresh = supportCalls.find(row => row.id === id) || fresh;
+    if (room) liveRoomCode = room;
+  }
   if (fresh?.room_code) liveRoomCode = fresh.room_code;
   // Always rebuild the live panel so title/iframe match this call (never keep an old room).
   render();
@@ -1936,8 +1954,8 @@ async function acceptSupportCall(id) {
       $("#supportVideoFrame")?.contentWindow?.postMessage({ type: "lab-enable-remote-av" }, "*");
     } catch {}
   }, 2500);
-  if (fresh?.room_code) toast(`Call answered — joining glasses room ${fresh.room_code}…`);
-  else toast("Call answered — waiting for glasses video room…");
+  if (fresh?.room_code || liveRoomCode) toast(`Call answered — joining glasses room ${fresh?.room_code || liveRoomCode}…`);
+  else toast("Call answered — still waiting for glasses video room…");
 }
 
 async function answerIncomingCall() {
