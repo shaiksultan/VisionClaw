@@ -124,7 +124,7 @@ fun SettingsScreen(
                 placeholder = "Enter Gemini API key",
             )
 
-            SectionHeader("LAB VISION Demo Hub")
+            SectionHeader("Lab Vision AI")
             MonoTextField(
                 value = peopleDirectoryURL,
                 onValueChange = { peopleDirectoryURL = it },

@@ -11,6 +11,7 @@ object AgentRouter {
     const val AB_TWIN = "ab-twin"
     const val VISUAL = "visual"
     const val MUSIC = "music"
+    const val BBC = "bbc"
     const val FOOTBALL = "football"
 
     fun fromToolName(toolName: String): String {
@@ -24,6 +25,7 @@ object AgentRouter {
             name.contains("expert_engineer") || name.contains("support") -> SUPPORT
             name.contains("digital_twin") || name.contains("twin") -> AB_TWIN
             name.contains("play_music") || name == "music" -> MUSIC
+            name.contains("bbc") || name.contains("play_bbc") -> BBC
             name.contains("football") || name.contains("soccer") -> FOOTBALL
             name.contains("stop_audio") -> CHAT
             else -> CHAT
@@ -33,7 +35,8 @@ object AgentRouter {
     fun fromUtterance(text: String): String? {
         val t = text.lowercase()
         return when {
-            Regex("""\b(play\s+music|music\s+agent|listen to music|start music)\b""").containsMatchIn(t) -> MUSIC
+            Regex("""\b(play\s+music|music\s+agent|listen to music|start music|national anthem)\b""").containsMatchIn(t) -> MUSIC
+            Regex("""\b(bbc|world service|bbc radio)\b""").containsMatchIn(t) -> BBC
             Regex("""\b(football|soccer|premier league|live\s+match|match\s+audio|sports\s+radio)\b""").containsMatchIn(t) -> FOOTBALL
             Regex("""\b(ticket|evidence|screenshot|incident|fault)\b""").containsMatchIn(t) -> TICKETS
             Regex("""\b(inventory|stock|equipment|add item|where is)\b""").containsMatchIn(t) -> INVENTORY

@@ -173,6 +173,14 @@ function labManagerPlaybookText() {
 function wantsAgentHelp(text) {
   const lower = String(text || "").toLowerCase().replace(/\s+/g, " ").trim();
   if (!lower) return false;
+  // "which agent handled the most tickets" is a data question, not an intro.
+  const workQuestion = /\b(tickets?|inventory|stock|support|calls?|twins?|captures?|tests?|counts?|max(?:imum|ium)?|most|highest|handl\w*|created|closed)\b/.test(lower);
+  const explicitHelp = /\bhow can (you|u)(?:\s+can you)?(?:\s+help)?\b/.test(lower)
+    || /\b(who are you|introduce yourself|what are you|your name)\b/.test(lower)
+    || /\bwhat (can|do) you (do|help with|help)\b/.test(lower)
+    || /\b(list|show)\s+(me\s+)?(all\s+)?(the\s+)?agents?\b/.test(lower)
+    || /^(help|capabilities|menu)\b/.test(lower);
+  if (workQuestion && !explicitHelp) return false;
   // Speech stutters: "how can you can you help"
   if (/\bhow can (you|u)(?:\s+can you)?(?:\s+help)?\b/.test(lower)) return true;
   if (/\b(list|show|name|what|which|all)\b[\s\S]{0,40}\bagents?\b/.test(lower)) return true;
@@ -283,6 +291,50 @@ function inferSpecialistFromMessage(message) {
   return null;
 }
 
+function ticketAgentLabel(kind) {
+  if (kind === "remote_support") return "Lab Expert Engineer";
+  if (kind === "evidence") return "Evidence Ticket Agent";
+  return kind || "Unknown agent";
+}
+
+function asksTopTicketAgent(lower) {
+  const aboutTickets = /\btickets?\b/.test(lower);
+  const aboutRank = /\b(max(?:imum|ium)?|most|highest|top|biggest|largest)\b/.test(lower)
+    || (/\bwhich\b/.test(lower) && /\bagents?\b/.test(lower));
+  const aboutActor = /\b(handl\w*|agents?|devices?)\b/.test(lower);
+  return aboutTickets && aboutRank && aboutActor;
+}
+
+function topTicketAgents(db) {
+  const rows = db.prepare(`
+    SELECT COALESCE(NULLIF(ticket_type, ''), 'evidence') AS kind, COUNT(*) AS c
+    FROM tickets
+    GROUP BY kind
+    ORDER BY c DESC, kind ASC
+  `).all();
+  const total = rows.reduce((sum, row) => sum + Number(row.c || 0), 0);
+  if (!total) {
+    return {
+      reply: "There are no tickets in the local database yet.",
+      source: "local-db",
+      action: { view: "tickets" },
+      data: { ticketAgents: [] },
+    };
+  }
+  const top = Number(rows[0].c);
+  const leaders = rows.filter(row => Number(row.c) === top);
+  const lines = rows.map(row => `• ${ticketAgentLabel(row.kind)}: ${row.c}`);
+  const lead = leaders.length === 1
+    ? `${ticketAgentLabel(leaders[0].kind)} handled the most tickets: ${top} of ${total}.`
+    : `These agents are tied for the most tickets (${top} of ${total}): ${leaders.map(row => ticketAgentLabel(row.kind)).join(", ")}.`;
+  return {
+    reply: [lead, ...lines].join("\n"),
+    source: "local-db",
+    action: { view: "tickets" },
+    data: { ticketAgents: rows },
+  };
+}
+
 function answerFromLocalDb(db, text) {
   const raw = String(text || "").trim();
   const lower = raw.toLowerCase();
@@ -344,6 +396,11 @@ function answerFromLocalDb(db, text) {
       action: { view: "support" },
       data: { supportCall: call },
     };
+  }
+
+  if (asksTopTicketAgent(lower)) {
+    const ranked = topTicketAgents(db);
+    return ranked;
   }
 
   if (/\b(how many|count|list|show|recent|status|about)\b/.test(lower) && /\btickets?\b/.test(lower)) {
@@ -430,21 +487,19 @@ function answerFromLocalDb(db, text) {
     };
   }
 
-  if (/\b(inventory|stock|equipment|where is)\b/.test(lower)) {
-    const q = raw.replace(/^(where is|find|lookup|search)\s+/i, "").trim() || raw;
-    const like = `%${q}%`;
-    const items = db.prepare(`
-      SELECT name, category, location, quantity, status FROM inventory
-      WHERE name LIKE ? OR category LIKE ? OR location LIKE ? OR notes LIKE ?
-      ORDER BY name COLLATE NOCASE LIMIT 8
-    `).all(like, like, like, like);
-    if (!items.length) {
-      return { reply: `No inventory matches for “${q}” in the local database.`, source: "local-db", action: { view: "inventory" } };
+  const inventoryPhrase = inventoryQueryPhrase(raw);
+  const inventoryItems = searchInventory(db, raw);
+  const askedInventory = /\b(inventory|stock|equipment|where is|where are|how many)\b/.test(lower);
+  const exactInventory = inventoryItems.some(item => item.name.toLowerCase() === inventoryPhrase.toLowerCase());
+  if ((askedInventory || exactInventory) && inventoryPhrase) {
+    if (!inventoryItems.length) {
+      return { reply: `No inventory matches for “${inventoryPhrase}” in the local database.`, source: "local-db", action: { view: "inventory" } };
     }
     return {
-      reply: items.map(i => `• ${i.name} — ${i.quantity} ${i.status} @ ${i.location || "unknown"} (${i.category || "—"})`).join("\n"),
+      reply: inventorySummary(inventoryItems),
       source: "local-db",
       action: { view: "inventory" },
+      data: { inventory: inventoryItems.map(item => ({ name: item.name, location: item.location, quantity: item.quantity, status: item.status, notes: item.notes })) },
     };
   }
 
@@ -648,7 +703,7 @@ async function handleMissionChat(db, body = {}) {
   // Broader questions still go to OpenClaw with DB context.
   const wantsAi = /\b(why|how|explain|analyze|summarize|compare|recommend|what should|help me)\b/i.test(message)
     || (!local && true);
-  const preferLocalFacts = Boolean(local?.data?.ticket || local?.data?.supportCall || local?.data?.support);
+  const preferLocalFacts = Boolean(local?.data?.ticket || local?.data?.supportCall || local?.data?.support || local?.data?.inventory || local?.data?.ticketAgents);
   if (local && (!wantsAi || preferLocalFacts)) {
     // Stay in current chat (Mission Control or specialist) — never auto-jump views for facts.
     if (scoped) return { ...local, action: null, agent: focusAgent.id, agent_name: focusAgent.name };
@@ -1256,19 +1311,143 @@ function cleanKnowledge(input) {
   };
 }
 
+function inventoryQueryPhrase(text) {
+  return String(text || "")
+    .replace(/[?!.,]/g, " ")
+    .replace(/\b(please|can you|could you|would you|tell me|show me|do we have|how many|where is|where are|check|the|lab|inventory|stock|equipment|find|lookup|search|for|about|item|items|available|any|there|what|which)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function searchInventory(db, text, limit = 8) {
+  const phrase = inventoryQueryPhrase(text);
+  if (!phrase) return [];
+  const last = phrase.split(/\s+/).filter(Boolean).pop();
+  return db.prepare(`
+    SELECT * FROM inventory
+    WHERE name LIKE ? OR category LIKE ? OR location LIKE ? OR notes LIKE ?
+       OR name LIKE ? OR notes LIKE ?
+    ORDER BY CASE
+      WHEN lower(name) = lower(?) THEN 0
+      WHEN lower(name) = lower(?) THEN 1
+      WHEN lower(name) LIKE lower(?) THEN 2
+      ELSE 3
+    END, length(name), name COLLATE NOCASE
+    LIMIT ?
+  `).all(
+    `%${phrase}%`, `%${phrase}%`, `%${phrase}%`, `%${phrase}%`,
+    `%${last}%`, `%${last}%`,
+    phrase, last, `${last}%`,
+    limit,
+  );
+}
+
+function describeInventoryItem(item) {
+  const desc = String(item.notes || "").trim();
+  const where = item.location || "unknown location";
+  const core = `${item.name}: ${item.quantity} ${item.status || "unknown"} at ${where}`;
+  return desc ? `${core}. ${desc}` : core;
+}
+
 function inventorySummary(items) {
   if (!items.length) return "No matching lab inventory items were found.";
-  return items.map(item => {
-    const desc = String(item.notes || "").trim();
-    const where = item.location || "unknown location";
-    return desc
-      ? `${item.name}: ${desc}. ${item.quantity} at ${where} (${item.status})`
-      : `${item.name}: ${item.quantity} at ${where} (${item.status})`;
-  }).join(". ") + ".";
+  const [best, ...rest] = items;
+  const main = describeInventoryItem(best);
+  if (!rest.length) return `${main}.`;
+  const others = rest.map(describeInventoryItem).join(". ");
+  return `${main}. Other similar items: ${others}.`;
+}
+
+function knowledgeQueryPhrase(text) {
+  return String(text || "")
+    .replace(/[?!.,]/g, " ")
+    .replace(/\b(please|can you|could you|would you|tell me|show me|explain|describe|walk me through|walk through|what is|what's|whats|the|a|an|lab|knowledge|procedure|procedures|process|runbook|documentation|docs|article|lookup|search|find|for|about|how|do|i|we|to|validate|validation)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function searchKnowledge(db, text, limit = 5) {
+  const phrase = knowledgeQueryPhrase(text);
+  const raw = String(text || "").trim();
+  if (!phrase && !raw) return [];
+  const stop = new Set(["core", "test", "tests", "testing", "service", "services", "network", "lab"]);
+  const tokens = phrase.split(/\s+/).filter(t => t.length >= 2);
+  const rankTokens = tokens.filter(t => !stop.has(t.toLowerCase()) || tokens.length <= 2);
+  const searchTokens = [...new Set((rankTokens.length ? rankTokens : tokens).slice(0, 6))];
+  const last = searchTokens.length ? searchTokens[searchTokens.length - 1] : phrase;
+  const primary = phrase || raw;
+  const bigrams = [];
+  for (let i = 0; i < tokens.length - 1; i += 1) {
+    bigrams.push(`${tokens[i]} ${tokens[i + 1]}`);
+  }
+
+  // Pull candidates with phrase / last-word / individual token matches (same idea as inventory).
+  const clauses = [];
+  const params = [];
+  const addFieldLikes = (value) => {
+    const like = `%${value}%`;
+    clauses.push("(title LIKE ? COLLATE NOCASE OR slug LIKE ? COLLATE NOCASE OR tags LIKE ? COLLATE NOCASE OR summary LIKE ? COLLATE NOCASE OR content LIKE ? COLLATE NOCASE)");
+    params.push(like, like, like, like, like);
+  };
+  addFieldLikes(primary);
+  if (last && last.toLowerCase() !== primary.toLowerCase()) addFieldLikes(last);
+  for (const token of searchTokens) {
+    if (token.toLowerCase() === primary.toLowerCase() || token.toLowerCase() === String(last || "").toLowerCase()) continue;
+    addFieldLikes(token);
+  }
+  for (const bg of bigrams.slice(0, 4)) addFieldLikes(bg);
+
+  const rows = db.prepare(`
+    SELECT * FROM knowledge
+    WHERE ${clauses.join(" OR ")}
+    LIMIT 40
+  `).all(...params);
+
+  const scored = rows.map(row => {
+    const hay = `${row.title}\n${row.slug}\n${row.tags}\n${row.summary}\n${row.content}`.toLowerCase();
+    let score = 0;
+    const title = String(row.title || "").toLowerCase();
+    if (title === primary.toLowerCase()) score += 40;
+    if (title.includes(primary.toLowerCase())) score += 18;
+    if (hay.includes(primary.toLowerCase())) score += 10;
+    for (const bg of bigrams) {
+      if (title.includes(bg.toLowerCase())) score += 12;
+      else if (hay.includes(bg.toLowerCase())) score += 6;
+    }
+    for (const t of tokens) {
+      const tl = t.toLowerCase();
+      if (title.includes(tl)) score += 4;
+      else if (String(row.tags || "").toLowerCase().includes(tl)) score += 3;
+      else if (hay.includes(tl)) score += 1;
+    }
+    return { row, score };
+  });
+  scored.sort((a, b) => b.score - a.score || a.row.title.localeCompare(b.row.title));
+  const seen = new Set();
+  const out = [];
+  for (const item of scored) {
+    if (item.score <= 0) continue;
+    if (seen.has(item.row.id)) continue;
+    seen.add(item.row.id);
+    out.push(item.row);
+    if (out.length >= limit) break;
+  }
+  return out;
 }
 
 function knowledgeSummary(article) {
-  return `${article.title}. ${article.summary || article.content.split("\n")[0]}`;
+  const title = String(article.title || "").trim();
+  const summary = String(article.summary || "").trim();
+  const steps = String(article.content || "")
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(line => /^\d+\./.test(line))
+    .slice(0, 4);
+  if (steps.length) {
+    return `${title}. ${summary || "Approved lab procedure."} Key steps: ${steps.join(" ")}`;
+  }
+  const firstLine = String(article.content || "").split(/\r?\n/).map(l => l.trim()).find(Boolean) || "";
+  return `${title}. ${summary || firstLine}`;
 }
 
 function nextTicketCode(db) {
@@ -2220,10 +2399,7 @@ function createHandler(db, publicDir = PUBLIC_DIR) {
       if (url.pathname === "/api/inventory/lookup" && req.method === "GET") {
         const q = String(url.searchParams.get("q") || url.searchParams.get("name") || "").trim();
         if (!q) return respond(res, 400, { error: "Query is required" });
-        const like = `%${q}%`;
-        const items = db.prepare("SELECT * FROM inventory WHERE name LIKE ? OR category LIKE ? OR location LIKE ? OR notes LIKE ? ORDER BY name COLLATE NOCASE LIMIT 8")
-          .all(like, like, like, like)
-          .map(inventoryListItem);
+        const items = searchInventory(db, q).map(inventoryListItem);
         return respond(res, 200, { items, spoken_summary: inventorySummary(items) });
       }
       if (url.pathname === "/api/inventory" && req.method === "GET") {
@@ -2285,16 +2461,37 @@ function createHandler(db, publicDir = PUBLIC_DIR) {
       if (url.pathname === "/api/knowledge/lookup" && req.method === "GET") {
         const q = String(url.searchParams.get("q") || url.searchParams.get("title") || "").trim();
         if (!q) return respond(res, 400, { error: "Query is required" });
-        const like = `%${q}%`;
-        const article = db.prepare("SELECT * FROM knowledge WHERE title LIKE ? OR slug LIKE ? OR tags LIKE ? OR content LIKE ? ORDER BY CASE WHEN title LIKE ? THEN 0 ELSE 1 END, title LIMIT 1")
-          .get(like, like, like, like, like);
-        if (!article) return respond(res, 404, { error: "No matching knowledge article found" });
-        article.spoken_summary = knowledgeSummary(article);
-        return respond(res, 200, article);
+        const matches = searchKnowledge(db, q, 3);
+        if (!matches.length) return respond(res, 404, { error: "No matching knowledge article found" });
+        const article = matches[0];
+        const others = matches.slice(1).map(row => row.title).filter(Boolean);
+        let spoken = knowledgeSummary(article);
+        if (others.length) spoken += ` Related procedures: ${others.join("; ")}.`;
+        return respond(res, 200, {
+          ...article,
+          spoken_summary: spoken,
+          matches: matches.map(row => ({
+            id: row.id,
+            title: row.title,
+            summary: row.summary,
+            tags: row.tags,
+          })),
+        });
       }
       if (url.pathname === "/api/knowledge" && req.method === "GET") {
-        const q = `%${url.searchParams.get("q") || ""}%`;
-        return respond(res, 200, db.prepare("SELECT id,title,slug,summary,tags,updated_at FROM knowledge WHERE title LIKE ? OR summary LIKE ? OR tags LIKE ? ORDER BY title COLLATE NOCASE").all(q, q, q));
+        const q = String(url.searchParams.get("q") || "").trim();
+        if (!q) {
+          return respond(res, 200, db.prepare("SELECT id,title,slug,summary,tags,updated_at FROM knowledge ORDER BY title COLLATE NOCASE").all());
+        }
+        const rows = searchKnowledge(db, q, 40).map(row => ({
+          id: row.id,
+          title: row.title,
+          slug: row.slug,
+          summary: row.summary,
+          tags: row.tags,
+          updated_at: row.updated_at,
+        }));
+        return respond(res, 200, rows);
       }
       if (url.pathname === "/api/knowledge" && req.method === "POST") {
         const article = cleanKnowledge(await readBody(req));

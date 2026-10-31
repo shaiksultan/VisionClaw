@@ -6,6 +6,7 @@ import android.util.Log
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.GeminiToolCall
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.GeminiToolCallCancellation
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.openclaw.ToolDeclarations
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.settings.SettingsManager
 import java.io.ByteArrayOutputStream
 import java.util.Timer
 import java.util.TimerTask
@@ -62,7 +63,6 @@ class GeminiLiveService {
 
     private val client = OkHttpClient.Builder()
         .readTimeout(0, TimeUnit.MILLISECONDS)
-        .pingInterval(10, TimeUnit.SECONDS)
         .build()
 
     fun connect(callback: (Boolean) -> Unit) {
@@ -224,7 +224,8 @@ class GeminiLiveService {
                 })
                 put("systemInstruction", JSONObject().apply {
                     put("parts", JSONArray().put(JSONObject().apply {
-                        put("text", GeminiConfig.systemInstruction)
+                        val lang = SettingsManager.assistantLanguage
+                        put("text", GeminiConfig.systemInstruction + "\n\n" + lang.instruction)
                     }))
                 })
                 put("tools", JSONArray().put(JSONObject().apply {

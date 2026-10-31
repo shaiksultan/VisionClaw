@@ -12,6 +12,7 @@ import java.util.concurrent.TimeUnit
 
 object WebRTCConfig {
     private const val TAG = "WebRTCConfig"
+    private const val ICE_CACHE_TTL_MS = 5 * 60 * 1000L
 
     // Video encoding
     const val VIDEO_BITRATE = 2_500_000 // 2.5 Mbps
@@ -22,6 +23,11 @@ object WebRTCConfig {
     // STUN server
     private const val STUN_URL = "stun:stun.l.google.com:19302"
     private const val STUN_URL_2 = "stun:stun1.l.google.com:19302"
+
+    @Volatile
+    private var cachedIceServers: List<PeerConnection.IceServer>? = null
+    @Volatile
+    private var cachedIceAtMs: Long = 0
 
     val signalingServerURL: String
         get() = SettingsManager.webrtcSignalingURL
@@ -44,8 +50,17 @@ object WebRTCConfig {
 
     /**
      * Fetch TURN credentials from the signaling server, falling back to STUN-only if unavailable.
+     * Cached briefly so the first Expert Engineer call is not stuck waiting on a cold TURN fetch.
      */
-    suspend fun fetchIceServers(): List<PeerConnection.IceServer> {
+    suspend fun fetchIceServers(forceRefresh: Boolean = false): List<PeerConnection.IceServer> {
+        val now = System.currentTimeMillis()
+        if (!forceRefresh) {
+            val cached = cachedIceServers
+            if (cached != null && now - cachedIceAtMs < ICE_CACHE_TTL_MS) {
+                return cached
+            }
+        }
+
         val servers = mutableListOf<PeerConnection.IceServer>()
 
         servers.add(PeerConnection.IceServer.builder(STUN_URL).createIceServer())
@@ -60,7 +75,15 @@ object WebRTCConfig {
             servers.add(expressTurnFallback())
         }
 
+        cachedIceServers = servers
+        cachedIceAtMs = now
         return servers
+    }
+
+    /** Warm ICE/TURN before the user asks for Expert Engineer (first call is much faster). */
+    suspend fun prefetchIceServers() {
+        runCatching { fetchIceServers(forceRefresh = false) }
+            .onFailure { Log.w(TAG, "ICE prefetch failed: ${it.message}") }
     }
 
     /** Public ExpressTURN credentials also served by visionclaw-signaling /api/turn. */

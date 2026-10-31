@@ -11,6 +11,7 @@ package com.meta.wearable.dat.externalsampleapps.cameraaccess.ui
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalActivity
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -66,8 +67,10 @@ import com.meta.wearable.dat.externalsampleapps.cameraaccess.support.SupportCall
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.support.SupportCallRecorder
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.support.SupportSessionBridge
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.wearables.WearablesViewModel
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.webrtc.WebRTCConfig
 import com.meta.wearable.dat.externalsampleapps.cameraaccess.webrtc.WebRTCSessionViewModel
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -100,10 +103,57 @@ fun StreamScreen(
     var activeSupportCallId by remember { mutableIntStateOf(0) }
     val activeSupportCallIdRef = remember { AtomicInteger(0) }
     var isEndingSupport by remember { mutableStateOf(false) }
+    var assistantLanguage by remember {
+        mutableStateOf(com.meta.wearable.dat.externalsampleapps.cameraaccess.settings.SettingsManager.assistantLanguage)
+    }
     val endingSupportRef = remember { AtomicBoolean(false) }
+    val resumeAiAfterSupport = remember { AtomicBoolean(false) }
+    val screenAlive = remember { AtomicBoolean(true) }
 
     LaunchedEffect(isPhoneMode) {
         labDemoClient.setStreamingMode(if (isPhoneMode) StreamingMode.PHONE else StreamingMode.GLASSES)
+    }
+
+    // Warm TURN/ICE so the first Expert Engineer call can open a room quickly.
+    LaunchedEffect(Unit) {
+        WebRTCConfig.prefetchIceServers()
+    }
+
+    // When Mission Control ends the call (PC hangup), clear "Waiting for expert engineer".
+    LaunchedEffect(activeSupportCallId) {
+        val callId = activeSupportCallId
+        if (callId <= 0) return@LaunchedEffect
+        while (activeSupportCallIdRef.get() == callId && screenAlive.get()) {
+            delay(2_000)
+            val session = runCatching { supportCallClient.getSession(callId) }.getOrNull() ?: continue
+            val status = session.optString("status")
+            val phase = session.optString("call_phase")
+            if (status.equals("ended", ignoreCase = true) || phase.equals("ended", ignoreCase = true)) {
+                if (endingSupportRef.compareAndSet(false, true)) {
+                    isEndingSupport = true
+                    try {
+                        endSupportCallIfNeeded(
+                            supportCallClient = supportCallClient,
+                            supportCallId = callId,
+                            webrtcViewModel = webrtcViewModel,
+                            streamViewModel = streamViewModel,
+                            context = context,
+                            alreadyStoppedWebRtc = false,
+                        ) { activeSupportCallId = 0; activeSupportCallIdRef.set(0) }
+                    } finally {
+                        endingSupportRef.set(false)
+                        isEndingSupport = false
+                        if (resumeAiAfterSupport.compareAndSet(true, false)) {
+                            delay(700)
+                            if (screenAlive.get()) {
+                                geminiViewModel.startSession(resumeAfterExpert = true)
+                            }
+                        }
+                    }
+                }
+                break
+            }
+        }
     }
 
     // When the expert disconnects from Mission Control, finish the support call on-device.
@@ -125,6 +175,12 @@ fun StreamScreen(
                     } finally {
                         endingSupportRef.set(false)
                         isEndingSupport = false
+                        if (resumeAiAfterSupport.compareAndSet(true, false)) {
+                            delay(700)
+                            if (screenAlive.get()) {
+                                geminiViewModel.startSession(resumeAfterExpert = true)
+                            }
+                        }
                     }
                 }
             }
@@ -148,15 +204,26 @@ fun StreamScreen(
 
     // Voice / tool-started Expert Engineer calls → start live video session
     LaunchedEffect(Unit) {
+        val seenCallIds = mutableSetOf<Int>()
         SupportSessionBridge.starts.collect { event ->
+            if (!seenCallIds.add(event.callId)) return@collect
             activeSupportCallId = event.callId
             activeSupportCallIdRef.set(event.callId)
-            // Stop AI voice session so mic/WebRTC can take over, then start live support.
+            // Pause AI voice so the expert call can use the mic, then bring it back when the expert hangs up.
             if (geminiViewModel.uiState.value.isGeminiActive) {
+                resumeAiAfterSupport.set(true)
                 geminiViewModel.stopSession()
+                // Brief settle so the first call does not race Gemini for the mic / audio path.
+                delay(350)
             }
             SupportCallRecorder.start()
             streamViewModel.supportRecordingActive = true
+            if (streamViewModel.uiState.value.streamSessionState != StreamSessionState.STREAMING &&
+                streamViewModel.uiState.value.streamSessionState != StreamSessionState.STARTING
+            ) {
+                if (isPhoneMode) streamViewModel.startPhoneCamera(lifecycleOwner)
+                else streamViewModel.startStream()
+            }
             webrtcViewModel.startSupportSession(event.callCode)
             withContext(Dispatchers.Main) {
                 Toast.makeText(
@@ -173,20 +240,45 @@ fun StreamScreen(
         streamViewModel.webrtcViewModel = webrtcViewModel
     }
 
-    // Start stream or phone camera
+    // Stay on the assistant screen until Stream is pressed.
     LaunchedEffect(isPhoneMode) {
-        if (isPhoneMode) {
-            geminiViewModel.streamingMode = StreamingMode.PHONE
-            streamViewModel.startPhoneCamera(lifecycleOwner)
-        } else {
-            geminiViewModel.streamingMode = StreamingMode.GLASSES
-            streamViewModel.startStream()
-        }
+        geminiViewModel.streamingMode = if (isPhoneMode) StreamingMode.PHONE else StreamingMode.GLASSES
     }
+
+    val videoStreaming = streamUiState.streamSessionState == StreamSessionState.STREAMING ||
+        streamUiState.streamSessionState == StreamSessionState.STARTING
+
+    fun startVideo() {
+        if (isPhoneMode) streamViewModel.startPhoneCamera(lifecycleOwner)
+        else streamViewModel.startStream()
+    }
+
+    fun leaveScreen() {
+        screenAlive.set(false)
+        resumeAiAfterSupport.set(false)
+        if (geminiUiState.isGeminiActive) geminiViewModel.stopSession()
+        if (webrtcUiState.isActive) {
+            scope.launch {
+                endSupportCallIfNeeded(
+                    supportCallClient = supportCallClient,
+                    supportCallId = activeSupportCallId,
+                    webrtcViewModel = webrtcViewModel,
+                    streamViewModel = streamViewModel,
+                    context = context,
+                ) { activeSupportCallId = 0; activeSupportCallIdRef.set(0) }
+            }
+        }
+        streamViewModel.stopStream()
+        wearablesViewModel.navigateToDeviceSelection()
+    }
+
+    BackHandler(onBack = { leaveScreen() })
 
     // Clean up on exit
     DisposableEffect(Unit) {
         onDispose {
+            screenAlive.set(false)
+            resumeAiAfterSupport.set(false)
             streamViewModel.supportRecordingActive = false
             if (geminiUiState.isGeminiActive) {
                 geminiViewModel.stopSession()
@@ -216,23 +308,36 @@ fun StreamScreen(
             .fillMaxSize()
             .background(LabVisionColors.BackgroundTop),
     ) {
-        // Video feed
-        streamUiState.videoFrame?.let { videoFrame ->
+        val showVideo = videoStreaming && streamUiState.videoFrame != null
+        if (showVideo) {
             Image(
-                bitmap = videoFrame.asImageBitmap(),
+                bitmap = streamUiState.videoFrame!!.asImageBitmap(),
                 contentDescription = stringResource(R.string.live_stream),
                 modifier = Modifier.fillMaxSize(),
                 contentScale = ContentScale.Crop,
             )
-        } ?: run {
-            // Waiting for first frame — same dark theme as home/stream select
+        } else {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(LabVisionBackgroundBrush),
+                    .background(LabVisionBackgroundBrush)
+                    .padding(bottom = 96.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                AnimatedOrb(modifier = Modifier.fillMaxWidth(0.7f))
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    if (!geminiUiState.isGeminiActive) {
+                        Text(
+                            text = "Lab Vision AI is ready now.",
+                            color = LabVisionColors.TextPrimary,
+                            fontSize = 22.sp,
+                            fontWeight = FontWeight.Medium,
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            modifier = Modifier.padding(horizontal = 24.dp),
+                        )
+                        Spacer(modifier = Modifier.height(18.dp))
+                    }
+                    AnimatedOrb(modifier = Modifier.fillMaxWidth(0.72f))
+                }
             }
         }
 
@@ -306,23 +411,6 @@ fun StreamScreen(
 
             // Controls at bottom — same card/button language as Start on Glasses / Phone
             ControlsRow(
-                onStopStream = {
-                    if (geminiUiState.isGeminiActive) geminiViewModel.stopSession()
-                    if (webrtcUiState.isActive) {
-                        scope.launch {
-                            endSupportCallIfNeeded(
-                                supportCallClient = supportCallClient,
-                                supportCallId = activeSupportCallId,
-                                webrtcViewModel = webrtcViewModel,
-                                streamViewModel = streamViewModel,
-                                context = context,
-                            ) { activeSupportCallId = 0; activeSupportCallIdRef.set(0) }
-                        }
-                    }
-                    streamViewModel.stopStream()
-                    wearablesViewModel.navigateToDeviceSelection()
-                },
-                onCapturePhoto = { streamViewModel.capturePhoto() },
                 onToggleAI = {
                     if (geminiUiState.isGeminiActive) {
                         geminiViewModel.stopSession()
@@ -331,31 +419,19 @@ fun StreamScreen(
                     }
                 },
                 isAIActive = geminiUiState.isGeminiActive,
-                onToggleLive = {
-                    if (webrtcUiState.isActive) {
-                        if (!endingSupportRef.compareAndSet(false, true)) return@ControlsRow
-                        isEndingSupport = true
-                        scope.launch {
-                            try {
-                                endSupportCallIfNeeded(
-                                    supportCallClient = supportCallClient,
-                                    supportCallId = activeSupportCallId,
-                                    webrtcViewModel = webrtcViewModel,
-                                    streamViewModel = streamViewModel,
-                                    context = context,
-                                ) { activeSupportCallId = 0; activeSupportCallIdRef.set(0) }
-                            } finally {
-                                endingSupportRef.set(false)
-                                isEndingSupport = false
-                            }
-                        }
-                    } else {
-                        supportDescription = ""
-                        showSupportDialog = true
+                language = assistantLanguage,
+                onLanguageSelected = { selected ->
+                    assistantLanguage = selected
+                    com.meta.wearable.dat.externalsampleapps.cameraaccess.settings.SettingsManager.assistantLanguage = selected
+                    if (geminiUiState.isGeminiActive) {
+                        geminiViewModel.stopSession()
+                        geminiViewModel.startSession()
                     }
                 },
-                isLiveActive = webrtcUiState.isActive,
-                isSupportMode = true,
+                onToggleStream = {
+                    if (videoStreaming) streamViewModel.stopStream() else startVideo()
+                },
+                isStreaming = videoStreaming,
                 modifier = Modifier.align(Alignment.BottomCenter),
             )
         }
@@ -392,7 +468,10 @@ fun StreamScreen(
                     onClick = {
                         showSupportDialog = false
                         scope.launch {
-                            if (geminiUiState.isGeminiActive) geminiViewModel.stopSession()
+                            if (geminiUiState.isGeminiActive) {
+                                resumeAiAfterSupport.set(true)
+                                geminiViewModel.stopSession()
+                            }
                             val description = supportDescription.ifBlank { "Expert Engineer request from AI glasses" }
                             var callCode = "LOCAL"
                             val hubUrl = SettingsManager.peopleDirectoryURL.trimEnd('/')

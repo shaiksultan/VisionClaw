@@ -10,6 +10,78 @@ const esc = s => String(s || "").replace(/[&<>'"]/g, c => ({ "&": "&amp;", "<": 
 const attr = s => String(s || "").replace(/"/g, "&quot;");
 const toast = message => { const t = $("#toast"); t.textContent = message; t.classList.add("show"); setTimeout(() => t.classList.remove("show"), 2200); };
 
+const recentSideAlerts = new Set();
+
+function sideAlert(title, detail) {
+  const host = $("#sideAlerts");
+  if (!host || !title) return;
+  const key = `${title}|${detail || ""}`;
+  if (recentSideAlerts.has(key)) return;
+  recentSideAlerts.add(key);
+  setTimeout(() => recentSideAlerts.delete(key), 8000);
+  const card = document.createElement("div");
+  card.className = "side-alert";
+  const heading = document.createElement("strong");
+  heading.textContent = title;
+  card.appendChild(heading);
+  if (detail) {
+    const body = document.createElement("p");
+    body.textContent = detail;
+    card.appendChild(body);
+  }
+  host.appendChild(card);
+  requestAnimationFrame(() => card.classList.add("show"));
+  playNoticeChime();
+  setTimeout(() => {
+    card.classList.remove("show");
+    card.classList.add("leaving");
+    setTimeout(() => card.remove(), 320);
+  }, 5200);
+}
+
+function creationAlert(entry) {
+  if (!entry || String(entry.method || "").toUpperCase() !== "POST") return null;
+  if (Number(entry.status_code) >= 400 || entry.level === "error" || entry.level === "warn") return null;
+  const path = entry.path || "";
+  const command = String(entry.command || "");
+  const summary = String(entry.response_summary || "").trim();
+  if (path === "/api/inventory" || command === "add_inventory_item") {
+    if (path !== "/api/inventory") return null;
+    return { title: "Added to inventory", detail: summary || "Inventory item saved" };
+  }
+  if (path === "/api/twins" || command === "create_digital_twin") {
+    if (path !== "/api/twins") return null;
+    return { title: "Digital twin added", detail: summary || "Capture job created" };
+  }
+  const supportEnded = path === "/api/support/end" || /\/api\/support\/(?:sessions\/)?\d+\/end$/.test(path);
+  if (supportEnded && /ticket/i.test(summary) && !/already ended/i.test(summary)) {
+    return { title: "Ticket added", detail: summary };
+  }
+  if (path === "/api/tickets" || command === "create_evidence_ticket") {
+    if (path !== "/api/tickets") return null;
+    return { title: "Evidence ticket added", detail: summary || "New ticket saved" };
+  }
+  return null;
+}
+
+function playNoticeChime() {
+  try {
+    const ctx = ensureAudioCtx();
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "sine";
+    osc.frequency.value = 660;
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.08, now + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.22);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.24);
+  } catch {}
+}
+
 function openModal(title, html, bind) {
   const root = $("#modalRoot");
   $("#modalTitle").textContent = title;
@@ -129,6 +201,8 @@ async function loadLogs(initial = false) {
 
 function appendLog(entry) {
   if (logs.some(row => row.id === entry.id)) return;
+  const created = creationAlert(entry);
+  if (created) sideAlert(created.title, created.detail);
   logs.push(entry);
   if (logs.length > 300) logs = logs.slice(-300);
   lastLogId = Math.max(lastLogId, entry.id);
@@ -147,23 +221,33 @@ function shouldTrackAgentEntry(entry) {
 
 function stopLogStream() {
   if (logStream) { logStream.close(); logStream = null; }
-  if (logPollTimer) { clearInterval(logPollTimer); logPollTimer = null; }
 }
 
 function startLogStream() {
-  stopLogStream();
+  if (logStream) { logStream.close(); logStream = null; }
   if (typeof EventSource !== "undefined") {
     logStream = new EventSource("/api/logs/stream");
     logStream.onmessage = e => { try { appendLog(JSON.parse(e.data)); } catch {} };
-    logStream.onerror = () => { stopLogStream(); logPollTimer = setInterval(refreshLogsQuiet, 3000); };
-  } else {
-    logPollTimer = setInterval(refreshLogsQuiet, 2000);
+    logStream.onerror = () => { if (logStream) { logStream.close(); logStream = null; } };
   }
+}
+
+function startActivityAlerts() {
+  if (logPollTimer) return;
+  logPollTimer = setInterval(() => {
+    refreshLogsQuiet().catch(() => {});
+    if (!logStream) startLogStream();
+  }, 3000);
 }
 
 async function refreshLogsQuiet() {
   try {
+    const seen = lastLogId;
     await loadLogs(false);
+    logs.filter(row => row.id > seen).forEach(entry => {
+      const created = creationAlert(entry);
+      if (created) sideAlert(created.title, created.detail);
+    });
     await loadAgentStatus();
     if (currentView === "logs") updateLogsSidebar();
   } catch {}
@@ -275,8 +359,15 @@ function sessionTimeLabel() {
   return new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
+/** Not offered from the AI Glasses menu — lab console only. */
+const GLASSES_MENU_HIDDEN = new Set(["mobile-ps"]);
+
+function glassesMenuAgents() {
+  return demos.filter(d => !GLASSES_MENU_HIDDEN.has(d.id));
+}
+
 function demoSessions() {
-  return demos.map((d, i) => ({
+  return glassesMenuAgents().map((d, i) => ({
     id: d.id,
     title: d.name.replace(/\s+Agent$/, "").replace(/^ab-twin\s*[—–-]?\s*/i, ""),
     preview: d.example || d.description || "",
@@ -401,8 +492,8 @@ function agentCard(d) {
   </article>`;
 }
 
-function routingRows() {
-  return demos.map(d => `<div class="route-row">
+function routingRows(list = demos) {
+  return list.map(d => `<div class="route-row">
     <div class="route-cat">${esc(d.routeCategory)}</div>
     <div class="route-desc">${esc(d.routeDesc)}</div>
     <span class="route-badge${d.routeAgentSecondary ? " secondary" : ""}">${esc(d.routeAgent)}</span>
@@ -619,15 +710,28 @@ function liveChatMarkup(view = currentView, opts = {}) {
 function hydrateChatCharts() {
   const thread = document.getElementById("liveChatThread");
   if (!thread || !window.MissionCharts) return;
-  window.MissionCharts.destroyChatCharts();
-  const view = (currentView === "chat" || AGENT_CHAT_VIEWS.has(currentView)) ? currentView : "chat";
-  const messages = getChatMessages(view);
-  const chartMessages = messages.filter(m => m.role !== "user" && Array.isArray(m.charts) && m.charts.length);
-  const stacks = thread.querySelectorAll(".msg-bubble.has-genui");
-  chartMessages.forEach((msg, i) => {
-    if (stacks[i]) window.MissionCharts.attachChartPayloads(stacks[i], msg.charts);
+  const paint = () => {
+    if (!document.getElementById("liveChatThread")) return;
+    window.MissionCharts.destroyChatCharts();
+    const view = (currentView === "chat" || AGENT_CHAT_VIEWS.has(currentView)) ? currentView : "chat";
+    const messages = getChatMessages(view);
+    const chartMessages = messages.filter(m => m.role !== "user" && Array.isArray(m.charts) && m.charts.length);
+    // Match bubbles that actually contain chart cards (tables alone also use has-genui).
+    const chartBubbles = [...thread.querySelectorAll(".msg-bubble.has-genui")].filter(el => el.querySelector(".chart-card"));
+    chartMessages.forEach((msg, i) => {
+      if (chartBubbles[i]) window.MissionCharts.attachChartPayloads(chartBubbles[i], msg.charts);
+    });
+    window.MissionCharts.mountChatCharts(thread);
+    const lastChart = thread.querySelector(".chart-card:last-of-type");
+    if (lastChart) {
+      try { lastChart.scrollIntoView({ block: "nearest", behavior: "smooth" }); } catch {}
+    }
+  };
+  // Paint after layout so Chart.js gets a non-zero canvas size.
+  requestAnimationFrame(() => {
+    paint();
+    requestAnimationFrame(paint);
   });
-  window.MissionCharts.mountChatCharts(thread);
 }
 
 function withAgentChat(innerHtml) {
@@ -640,7 +744,8 @@ function withAgentChat(innerHtml) {
 
 function overviewView() {
   const support = demos.find(d => d.id === "support");
-  const cards = demos.map(d => `<article class="agent-prompt-card" data-view="${d.id}">
+  const glassesAgents = glassesMenuAgents();
+  const cards = glassesAgents.map(d => `<article class="agent-prompt-card" data-view="${d.id}">
     <div class="agent-card-top">
       ${agentMarkHtml(d.id, "sm")}
       <div class="agent-label">${esc(d.number)} · ${esc(d.label)}</div>
@@ -663,7 +768,7 @@ function overviewView() {
     </article>
     <p class="chat-system">Available agents</p>
     ${cards || '<p class="muted">No agents loaded.</p>'}
-    <section class="routing"><h2>Command routing</h2><div class="routing-table">${routingRows()}</div></section>
+    <section class="routing"><h2>Command routing</h2><div class="routing-table">${routingRows(glassesAgents)}</div></section>
   </div>`;
 }
 
@@ -1268,7 +1373,9 @@ function openTicketDialog() {
         await loadTickets($("#ticketSearch")?.value || "");
         render();
         bindTickets();
-        toast(`Ticket ${created.ticket_code || "created"}`);
+        const ticketCode = created.ticket_code || "created";
+        sideAlert("Ticket added", created.spoken_summary || `Ticket ${ticketCode} saved`);
+        toast(`Ticket ${ticketCode}`);
       } catch (err) {
         toast(err.message);
       } finally {
@@ -1921,6 +2028,7 @@ async function endSupportCall() {
     const code = result.ticket_code || result.ticket?.ticket_code || "saved";
     openedTicketId = result.ticket_id || result.ticket?.id || null;
     openedHasTranscript = Boolean(result.transcript || result.ticket?.transcript || liveTranscript);
+    sideAlert("Ticket added", result.spoken_summary || `Ticket ${code} saved`);
     toast(openedHasTranscript
       ? `Call closed. Ticket ${code} saved with transcription.`
       : frames.length
@@ -2503,6 +2611,9 @@ async function boot() {
   await Promise.allSettled([loadPlatformConfig(), loadInventory(), loadKnowledge(), loadTests(), loadTickets(), loadAgentStatus(), loadTaskBoard(), loadTwins(), loadSupportCalls()]);
   detectIncomingSupportCalls(supportCalls);
   startIncomingSupportMonitor();
+  await loadLogs(true);
+  startLogStream();
+  startActivityAlerts();
   startWebAgentPresence();
   startAgentStatusPoll();
   render();

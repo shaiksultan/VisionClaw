@@ -115,6 +115,7 @@ object ToolDeclarations {
             .put(createDigitalTwinJSON())
             .put(requestExpertEngineerJSON())
             .put(playMusicJSON())
+            .put(playBbcRadioJSON())
             .put(playFootballAudioJSON())
             .put(stopAudioStreamJSON())
             .put(startMeetingJSON())
@@ -123,21 +124,28 @@ object ToolDeclarations {
 
     private fun playMusicJSON(): JSONObject = JSONObject().apply {
         put("name", "play_music")
-        put("description", "Start free music radio (audio only) from a public stream such as SomaFM. Use when the user says play music, start music, or Music Agent.")
+        put("description", "Play the UAE national anthem first, then continue with free live music radio (audio only). Use when the user says play music, start music, national anthem, or Music Agent.")
+        put("parameters", JSONObject().put("type", "object").put("properties", JSONObject()))
+        put("behavior", "BLOCKING")
+    }
+
+    private fun playBbcRadioJSON(): JSONObject = JSONObject().apply {
+        put("name", "play_bbc_radio")
+        put("description", "Start free live BBC radio (audio only), BBC World Service. Use when the user says BBC, BBC radio, World Service, or play the radio.")
         put("parameters", JSONObject().put("type", "object").put("properties", JSONObject()))
         put("behavior", "BLOCKING")
     }
 
     private fun playFootballAudioJSON(): JSONObject = JSONObject().apply {
         put("name", "play_football_audio")
-        put("description", "Start free live football / sports radio (audio only) from a public sports radio stream. Use when the user says live football, football match audio, soccer commentary, or Football Agent. Audio only — no video.")
+        put("description", "Start free English songs radio (audio only): SomaFM Indie Pop, Lush, or Radio Paradise. Use when the user says live football, Football Agent, or English songs. Audio only — no video.")
         put("parameters", JSONObject().put("type", "object").put("properties", JSONObject()))
         put("behavior", "BLOCKING")
     }
 
     private fun stopAudioStreamJSON(): JSONObject = JSONObject().apply {
         put("name", "stop_audio_stream")
-        put("description", "Stop the currently playing music or football audio stream. Use when the user says stop music, stop football, stop radio, or stop the stream.")
+        put("description", "Stop the currently playing music, BBC radio, or football audio stream. Use when the user says stop music, stop BBC, stop football, stop radio, or stop the stream.")
         put("parameters", JSONObject().put("type", "object").put("properties", JSONObject()))
         put("behavior", "BLOCKING")
     }

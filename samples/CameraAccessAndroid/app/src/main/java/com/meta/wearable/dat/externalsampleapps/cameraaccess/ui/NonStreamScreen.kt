@@ -100,7 +100,7 @@ fun NonStreamScreen(
                 ) {
                     BrandOrbLogo(size = 36.dp)
                     Text(
-                        text = "UAELAB Vision",
+                        text = "Lab Vision AI",
                         color = LabVisionColors.TextPrimary,
                         fontSize = 16.sp,
                         fontWeight = FontWeight.SemiBold,

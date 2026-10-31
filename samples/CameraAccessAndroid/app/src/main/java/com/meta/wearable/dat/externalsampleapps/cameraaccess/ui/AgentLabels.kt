@@ -6,7 +6,9 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
@@ -17,10 +19,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-/** Short clean names for pill labels (not action buttons). */
+/** Lab agents shown on the main screen. */
 val LabAgentCleanLabels: List<String>
     get() = listOf(
-        "UAELAB AI Assistant",
         "Lab Inventory",
         "Lab Knowledge",
         "Mobile PS",
@@ -28,8 +29,14 @@ val LabAgentCleanLabels: List<String>
         "Expert Engineer",
         "Digital Capture",
         "Visual Troubleshoot",
-        "Music",
-        "Football",
+    )
+
+/** Audio options, kept apart from the lab agents. */
+val OtherAgentCleanLabels: List<String>
+    get() = listOf(
+        "Live Music",
+        "BBC Radio",
+        "Live Football",
     )
 
 /** Clean dark pills — label-only, no button styling. */
@@ -38,10 +45,30 @@ val LabAgentCleanLabels: List<String>
 fun AgentNameLabels(
     modifier: Modifier = Modifier,
     labels: List<String> = LabAgentCleanLabels,
+    others: List<String> = OtherAgentCleanLabels,
 ) {
+    Column(modifier = modifier.fillMaxWidth()) {
+        AgentLabelRow(labels)
+        if (others.isNotEmpty()) {
+            Spacer(modifier = Modifier.height(16.dp))
+            Text(
+                text = "Others",
+                color = LabVisionColors.TextSecondary,
+                fontSize = 11.sp,
+                fontWeight = FontWeight.SemiBold,
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            AgentLabelRow(others)
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AgentLabelRow(labels: List<String>) {
     val shape = RoundedCornerShape(999.dp)
     FlowRow(
-        modifier = modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(6.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {

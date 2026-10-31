@@ -87,11 +87,12 @@ test("inventory lookup returns spoken summary", async t => {
 test("knowledge lookup returns packet core procedure", async t => {
   const db = openDatabase(":memory:"); const server = await startServer({ port:0, db }); t.after(()=>{server.close();db.close()});
   const base = `http://127.0.0.1:${server.address().port}`;
-  const response = await fetch(`${base}/api/knowledge/lookup?q=Packet Core Upgrade validation procedure`);
+  const response = await fetch(`${base}/api/knowledge/lookup?q=explain the mobile ps procedure`);
   assert.equal(response.status, 200);
   const article = await response.json();
-  assert.match(article.content, /Mobile PS smoke suite/);
-  assert.match(article.spoken_summary, /Packet Core Upgrade validation procedure/);
+  assert.match(article.title, /Mobile PS Core Testing/i);
+  assert.match(article.content, /Mobile PS/);
+  assert.match(article.spoken_summary, /Mobile PS Core Testing/i);
 });
 
 test("starts mobile ps test run and report", async t => {

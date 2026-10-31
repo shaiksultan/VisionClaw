@@ -3,7 +3,6 @@ package com.meta.wearable.dat.externalsampleapps.cameraaccess.gemini
 import android.content.Context
 import android.speech.tts.TextToSpeech
 import android.util.Log
-import java.util.Locale
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -18,7 +17,7 @@ class VoiceAnnouncer(context: Context) {
     private val ready = AtomicBoolean(false)
     private var tts: TextToSpeech? = TextToSpeech(context.applicationContext) { status ->
         if (status == TextToSpeech.SUCCESS) {
-            tts?.language = Locale.US
+            tts?.language = com.meta.wearable.dat.externalsampleapps.cameraaccess.settings.SettingsManager.assistantLanguage.locale
             tts?.setSpeechRate(1.05f)
             ready.set(true)
             Log.i(TAG, "TTS ready")
@@ -35,6 +34,7 @@ class VoiceAnnouncer(context: Context) {
             Log.d(TAG, "TTS not ready, skip: $message")
             return
         }
+        engine.language = com.meta.wearable.dat.externalsampleapps.cameraaccess.settings.SettingsManager.assistantLanguage.locale
         engine.speak(message, TextToSpeech.QUEUE_FLUSH, null, "announce-${System.nanoTime()}")
     }
 

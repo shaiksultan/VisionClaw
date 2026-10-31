@@ -131,7 +131,7 @@ class OpenClawEventClient {
                 put("maxProtocol", 3)
                 put("client", JSONObject().apply {
                     put("id", "android-node")
-                    put("displayName", "LAB VISION Glass")
+                    put("displayName", "Lab Vision AI")
                     put("version", "1.0")
                     put("platform", "android")
                     put("mode", "node")

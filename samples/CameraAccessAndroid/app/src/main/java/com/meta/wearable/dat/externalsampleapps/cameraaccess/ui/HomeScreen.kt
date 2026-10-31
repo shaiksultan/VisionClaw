@@ -205,7 +205,7 @@ private fun FancyConnectPanel(
             fontWeight = FontWeight.SemiBold,
         )
         Text(
-            text = "Connect UAELAB Vision to glasses or this phone",
+            text = "Connect Lab Vision AI to glasses or this phone",
             color = LabVisionColors.TextSecondary,
             fontSize = 13.sp,
             lineHeight = 18.sp,

@@ -32,7 +32,13 @@ body{
   box-shadow:0 1px 2px rgba(224,8,0,.18);
   background:#E00800;
 }
-.brand-logo-etisalat{background:#E00800}
+.brand-logo-etisalat{
+  width:auto;height:30px;flex:0 0 auto;
+  border-radius:8px;padding:8px 10px;
+  background:#000;object-fit:contain;object-position:left center;
+  image-rendering:auto;
+  box-shadow:0 1px 3px rgba(0,0,0,.18);
+}
 .brand-copy{min-width:0;display:flex;flex-direction:column;gap:2px}
 .brand-copy strong{
   font-size:15px;font-weight:750;letter-spacing:.02em;color:#111;
@@ -189,6 +195,7 @@ body{
   box-shadow:0 2px 8px rgba(224,8,0,.25);
 }
 .msg-stack{display:flex;flex-direction:column;gap:4px;max-width:min(520px,82%);min-width:0}
+.msg-row.assistant:has(.has-genui) .msg-stack{max-width:min(720px,94%)}
 .msg-row.user .msg-stack{align-items:flex-end}
 .msg-bubble{
   display:block;width:fit-content;max-width:100%;
@@ -480,6 +487,12 @@ body{
 .muted{color:var(--muted)}.hidden{display:none!important}
 .toast{position:fixed;right:24px;bottom:24px;background:#1c1f24;border:0;color:#fff;padding:12px 16px;border-radius:12px;opacity:0;transform:translateY(12px);transition:.2s;pointer-events:none;z-index:20;box-shadow:var(--shadow)}
 .toast.show{opacity:1;transform:none}
+.side-alerts{position:fixed;top:88px;right:28px;z-index:70;display:flex;flex-direction:column;gap:10px;width:min(320px,calc(100vw - 56px));pointer-events:none}
+.side-alert{background:#fff;color:#0b1220;border-radius:14px;padding:14px 16px;box-shadow:0 14px 36px rgba(0,0,0,.32);border-left:4px solid #0ea5e9;opacity:0;transform:translateY(-8px);transition:opacity .28s ease,transform .28s ease}
+.side-alert.show{opacity:1;transform:none}
+.side-alert.leaving{opacity:0;transform:translateY(-8px)}
+.side-alert strong{display:block;font-size:14px;line-height:1.3}
+.side-alert p{margin:4px 0 0;font-size:13px;line-height:1.4;color:#334155}
 .connected-panel,.log-panel{background:#fff;border:1px solid var(--line);border-radius:14px;padding:18px 20px;margin-bottom:18px;box-shadow:var(--shadow)}
 .connected-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:14px}
 .connected-head h2{margin:0;font:650 17px/1.2 "DM Sans",sans-serif}

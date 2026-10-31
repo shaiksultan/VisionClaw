@@ -15,7 +15,9 @@ function destroyChatCharts() {
 
 function chartCardHtml(chart, index) {
   const id = `chat-chart-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`;
-  return `<article class="genui-card chart-card" data-chart-id="${id}">
+  // Embed payload up front so charts still paint if hydrate index matching fails.
+  const payload = JSON.stringify(chart || {}).replace(/&/g, "&amp;").replace(/"/g, "&quot;");
+  return `<article class="genui-card chart-card" data-chart-id="${id}" data-chart-json="${payload}">
     <header class="genui-card-head">
       <div>
         <strong>${escapeChartText(chart.title || "Chart")}</strong>

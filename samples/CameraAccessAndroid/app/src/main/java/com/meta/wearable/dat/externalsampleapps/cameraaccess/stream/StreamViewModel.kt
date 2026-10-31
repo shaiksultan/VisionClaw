@@ -74,8 +74,10 @@ class StreamViewModel(
   var webrtcViewModel: WebRTCSessionViewModel? = null
   @Volatile var supportRecordingActive: Boolean = false
   private var phoneCameraManager: PhoneCameraManager? = null
+  private var suppressAutoExit = false
 
   fun startStream() {
+    suppressAutoExit = false
     videoJob?.cancel()
     stateJob?.cancel()
 
@@ -98,7 +100,7 @@ class StreamViewModel(
             _uiState.update { it.copy(streamSessionState = currentState) }
 
             // navigate back when state transitioned to STOPPED
-            if (currentState != prevState && currentState == StreamSessionState.STOPPED) {
+            if (currentState != prevState && currentState == StreamSessionState.STOPPED && !suppressAutoExit) {
               stopStream()
               wearablesViewModel.navigateToDeviceSelection()
             }
@@ -107,6 +109,7 @@ class StreamViewModel(
   }
 
   fun startPhoneCamera(lifecycleOwner: LifecycleOwner) {
+    suppressAutoExit = false
     val manager = PhoneCameraManager(getApplication())
     phoneCameraManager = manager
 
@@ -130,6 +133,7 @@ class StreamViewModel(
   }
 
   fun stopStream() {
+    suppressAutoExit = true
     // Stop foreground service
     StreamingService.stop(getApplication())
 

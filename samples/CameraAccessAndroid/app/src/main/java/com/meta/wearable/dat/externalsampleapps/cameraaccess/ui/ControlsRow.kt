@@ -3,6 +3,7 @@ package com.meta.wearable.dat.externalsampleapps.cameraaccess.ui
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -15,15 +16,21 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.PhotoCamera
-import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Videocam
-import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.lightColorScheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -32,18 +39,19 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.settings.AssistantLanguage
 
 @Composable
 fun ControlsRow(
-    onStopStream: () -> Unit,
-    onCapturePhoto: () -> Unit,
     onToggleAI: () -> Unit,
     isAIActive: Boolean,
-    onToggleLive: () -> Unit,
-    isLiveActive: Boolean,
-    isSupportMode: Boolean = true,
+    language: AssistantLanguage,
+    onLanguageSelected: (AssistantLanguage) -> Unit,
+    onToggleStream: () -> Unit,
+    isStreaming: Boolean,
     modifier: Modifier = Modifier,
 ) {
+    var languageMenuOpen by remember { mutableStateOf(false) }
     val panelShape = RoundedCornerShape(22.dp)
 
     Column(
@@ -63,33 +71,6 @@ fun ControlsRow(
             .padding(horizontal = 14.dp, vertical = 14.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        // Stop — same full-width style as Start on Glasses / Phone
-        Button(
-            onClick = onStopStream,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(54.dp),
-            shape = RoundedCornerShape(16.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = Color(0xFFDC2626),
-                contentColor = LabVisionColors.TextPrimary,
-            ),
-        ) {
-            Icon(
-                imageVector = Icons.Default.Stop,
-                contentDescription = null,
-                modifier = Modifier.size(20.dp),
-                tint = LabVisionColors.TextPrimary,
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(
-                text = "Stop",
-                fontWeight = FontWeight.SemiBold,
-                fontSize = 15.sp,
-            )
-        }
-
-        // Secondary actions — outlined chips matching the phone button style
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -101,22 +82,42 @@ fun ControlsRow(
                 onClick = onToggleAI,
                 modifier = Modifier.weight(1f),
             )
+            Box(modifier = Modifier.weight(1f)) {
+                StreamActionButton(
+                    label = language.shortLabel,
+                    icon = Icons.Default.Language,
+                    active = languageMenuOpen,
+                    onClick = { languageMenuOpen = true },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                MaterialTheme(colorScheme = lightColorScheme()) {
+                    DropdownMenu(
+                        expanded = languageMenuOpen,
+                        onDismissRequest = { languageMenuOpen = false },
+                    ) {
+                        AssistantLanguage.entries.forEach { option ->
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        text = option.displayName,
+                                        color = if (option == language) Color(0xFF0369A1) else Color.Black,
+                                        fontWeight = if (option == language) FontWeight.Bold else FontWeight.Medium,
+                                    )
+                                },
+                                onClick = {
+                                    languageMenuOpen = false
+                                    if (option != language) onLanguageSelected(option)
+                                },
+                            )
+                        }
+                    }
+                }
+            }
             StreamActionButton(
-                label = "Photo",
-                icon = Icons.Default.PhotoCamera,
-                active = false,
-                onClick = onCapturePhoto,
-                modifier = Modifier.weight(1f),
-            )
-            StreamActionButton(
-                label = when {
-                    isLiveActive && isSupportMode -> "End Call"
-                    isLiveActive -> "Live On"
-                    else -> "Expert"
-                },
+                label = if (isStreaming) "Stream On" else "Stream",
                 icon = Icons.Default.Videocam,
-                active = isLiveActive,
-                onClick = onToggleLive,
+                active = isStreaming,
+                onClick = onToggleStream,
                 modifier = Modifier.weight(1f),
             )
         }

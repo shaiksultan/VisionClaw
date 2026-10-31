@@ -90,8 +90,11 @@ class GeminiSessionViewModel(application: Application) : AndroidViewModel(applic
         _uiState.value = _uiState.value.copy(activeAgentId = agentId)
     }
 
-    fun startSession() {
+    private var speakAfterExpertCall = false
+
+    fun startSession(resumeAfterExpert: Boolean = false) {
         if (_uiState.value.isGeminiActive) return
+        speakAfterExpertCall = resumeAfterExpert
 
         if (!GeminiConfig.isConfigured) {
             _uiState.value = _uiState.value.copy(
@@ -227,6 +230,10 @@ class GeminiSessionViewModel(application: Application) : AndroidViewModel(applic
                     val msg = AudioStreamPlayer.play(getApplication(), StreamKind.MUSIC)
                     if (msg.startsWith("Playing")) ToolResult.Success(msg) else ToolResult.Failure(msg)
                 },
+                playBbcRadio = {
+                    val msg = AudioStreamPlayer.play(getApplication(), StreamKind.BBC)
+                    if (msg.startsWith("Playing")) ToolResult.Success(msg) else ToolResult.Failure(msg)
+                },
                 playFootballAudio = {
                     val msg = AudioStreamPlayer.play(getApplication(), StreamKind.FOOTBALL)
                     if (msg.startsWith("Playing")) ToolResult.Success(msg) else ToolResult.Failure(msg)
@@ -335,11 +342,19 @@ class GeminiSessionViewModel(application: Application) : AndroidViewModel(applic
                     if (!_uiState.value.isGeminiActive) return@launch
                     if (_uiState.value.connectionState != GeminiConnectionState.Ready) return@launch
                     delay(400)
-                    geminiService.sendTextMessage(
-                        "[System] Session just started. Speak first now as LAB AI Assistant. " +
-                            "Say only: I am LAB AI Assistant. How can I help? " +
-                            "Do not list agents. Do not call tools yet.",
-                    )
+                    val lang = SettingsManager.assistantLanguage
+                    val opening = if (speakAfterExpertCall) {
+                        "[System] The Expert Engineer call just ended. The user is still with you. " +
+                            "Speak first now only in ${lang.displayName}. " +
+                            "Say the expert call has ended and ask what they need next. " +
+                            "Do not list agents. Do not call tools yet."
+                    } else {
+                        "[System] Session just started. Speak first now as LAB AI Assistant, only in ${lang.displayName}. " +
+                            "Say only: ${lang.greeting} " +
+                            "Do not list agents. Do not call tools yet."
+                    }
+                    speakAfterExpertCall = false
+                    geminiService.sendTextMessage(opening)
                 }
 
                 // Connect to OpenClaw event stream for proactive notifications

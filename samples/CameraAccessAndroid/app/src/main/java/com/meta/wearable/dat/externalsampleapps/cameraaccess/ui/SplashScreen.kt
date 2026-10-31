@@ -39,7 +39,7 @@ fun SplashScreen(modifier: Modifier = Modifier) {
             Text(
                 text = stringResource(R.string.splash_title),
                 color = LabVisionColors.TextPrimary,
-                fontSize = 34.sp,
+                fontSize = 22.sp,
                 fontWeight = FontWeight.Bold,
                 letterSpacing = 1.sp,
                 textAlign = TextAlign.Center,

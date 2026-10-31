@@ -1,7 +1,8 @@
 package com.meta.wearable.dat.externalsampleapps.cameraaccess.ui
 
+import androidx.annotation.DrawableRes
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,13 +20,6 @@ import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.HeadsetMic
-import androidx.compose.material.icons.filled.MusicNote
-import androidx.compose.material.icons.filled.SportsSoccer
-import androidx.compose.material.icons.filled.Visibility
-import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -33,35 +27,36 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.meta.wearable.dat.externalsampleapps.cameraaccess.R
 import kotlinx.coroutines.launch
 
 private data class OnboardingPage(
     val title: String,
     val body: String,
-    val icons: List<ImageVector>,
+    @DrawableRes val imageRes: Int,
 )
 
 private val OnboardingPages = listOf(
     OnboardingPage(
-        title = "Meet LAB AI Assistant",
-        body = "Voice-first help for the telecom lab. Connect Ray-Ban Meta glasses or this phone and ask how I can help.",
-        icons = listOf(Icons.Filled.AutoAwesome, Icons.Filled.Visibility),
+        title = "Connect glasses or this phone",
+        body = "LAB AI Assistant is ready on Ray-Ban Meta glasses and on your phone.",
+        imageRes = R.drawable.onboarding_connect,
     ),
     OnboardingPage(
-        title = "Lab agents ready by voice",
-        body = "Inventory, Knowledge, Mobile PS, Evidence Tickets, Lab Expert Engineer, Digital Capture, and Visual Troubleshoot.",
-        icons = listOf(Icons.Filled.HeadsetMic, Icons.Filled.AutoAwesome),
+        title = "Your lab agents, by voice",
+        body = "Inventory, knowledge, tests, evidence, Expert Engineer, and digital capture.",
+        imageRes = R.drawable.onboarding_lab,
     ),
     OnboardingPage(
-        title = "Music & Football · audio live",
-        body = "Say “play music” for free music radio, or “live football” for sports commentary — audio only from free public streams.",
-        icons = listOf(Icons.Filled.MusicNote, Icons.Filled.SportsSoccer),
+        title = "Live music, BBC radio, and football",
+        body = "Say play music, BBC radio, or live football. Audio only.",
+        imageRes = R.drawable.onboarding_audio,
     ),
 )
 
@@ -72,20 +67,19 @@ fun OnboardingScreen(
 ) {
     val pagerState = rememberPagerState(pageCount = { OnboardingPages.size })
     val scope = rememberCoroutineScope()
-    val isLast = pagerState.currentPage == OnboardingPages.lastIndex
 
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(LabVisionBackgroundBrush),
+            .background(LabVisionColors.BackgroundTop),
     ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .systemBarsPadding()
                 .navigationBarsPadding()
-                .padding(horizontal = 22.dp)
-                .padding(bottom = 18.dp),
+                .padding(horizontal = 24.dp)
+                .padding(bottom = 16.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
             Row(
@@ -95,14 +89,12 @@ fun OnboardingScreen(
                 TextButton(onClick = onFinished) {
                     Text(
                         text = "Skip",
-                        color = LabVisionColors.AccentBright,
+                        color = LabVisionColors.TextSecondary,
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 15.sp,
                     )
                 }
             }
-
-            Spacer(modifier = Modifier.height(8.dp))
 
             HorizontalPager(
                 state = pagerState,
@@ -116,58 +108,36 @@ fun OnboardingScreen(
             Row(
                 horizontalArrangement = Arrangement.spacedBy(8.dp),
                 verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier.padding(vertical = 16.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 4.dp, bottom = 28.dp),
             ) {
                 repeat(OnboardingPages.size) { i ->
                     val active = i == pagerState.currentPage
                     Box(
                         modifier = Modifier
-                            .height(8.dp)
+                            .height(if (active) 7.dp else 8.dp)
                             .width(if (active) 28.dp else 8.dp)
                             .clip(RoundedCornerShape(999.dp))
                             .background(
-                                if (active) LabVisionColors.AccentMuted
+                                if (active) LabVisionColors.AccentBright
                                 else LabVisionColors.SurfaceElevated,
                             ),
                     )
                 }
             }
 
-            Text(
-                text = "By continuing you can connect glasses or this phone for LAB Vision agents.",
-                color = LabVisionColors.TextSecondary,
-                fontSize = 12.sp,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-            )
-
-            Spacer(modifier = Modifier.height(8.dp))
-
-            // Start = finish onboarding immediately (no need to swipe all pages)
             SwitchButton(
-                label = "Start",
-                onClick = onFinished,
+                label = if (pagerState.currentPage < OnboardingPages.lastIndex) "Next" else "Start",
+                onClick = {
+                    if (pagerState.currentPage < OnboardingPages.lastIndex) {
+                        scope.launch { pagerState.animateScrollToPage(pagerState.currentPage + 1) }
+                    } else {
+                        onFinished()
+                    }
+                },
                 accent = true,
             )
-
-            if (!isLast) {
-                Spacer(modifier = Modifier.height(8.dp))
-                TextButton(
-                    onClick = {
-                        scope.launch {
-                            pagerState.animateScrollToPage(pagerState.currentPage + 1)
-                        }
-                    },
-                ) {
-                    Text(
-                        text = "Next",
-                        color = LabVisionColors.TextSecondary,
-                        fontWeight = FontWeight.Medium,
-                    )
-                }
-            } else {
-                Spacer(modifier = Modifier.height(48.dp))
-            }
         }
     }
 }
@@ -175,74 +145,37 @@ fun OnboardingScreen(
 @Composable
 private fun OnboardingPageContent(page: OnboardingPage) {
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(horizontal = 4.dp),
+        modifier = Modifier.fillMaxSize(),
         horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
     ) {
-        Box(
+        Spacer(modifier = Modifier.weight(0.35f))
+        Image(
+            painter = painterResource(page.imageRes),
+            contentDescription = page.title,
+            contentScale = ContentScale.Crop,
             modifier = Modifier
-                .size(220.dp)
-                .clip(CircleShape)
-                .background(
-                    Brush.radialGradient(
-                        colors = listOf(
-                            LabVisionColors.Accent.copy(alpha = 0.22f),
-                            LabVisionColors.SurfaceCard.copy(alpha = 0.9f),
-                        ),
-                    ),
-                )
-                .border(1.dp, LabVisionColors.Accent.copy(alpha = 0.35f), CircleShape),
-            contentAlignment = Alignment.Center,
-        ) {
-            BrandOrbLogo(size = 72.dp)
-            Row(
-                modifier = Modifier
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = 28.dp),
-                horizontalArrangement = Arrangement.spacedBy(18.dp),
-            ) {
-                page.icons.forEach { icon ->
-                    Box(
-                        modifier = Modifier
-                            .size(44.dp)
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(LabVisionColors.AccentMuted.copy(alpha = 0.85f)),
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            imageVector = icon,
-                            contentDescription = null,
-                            tint = LabVisionColors.TextPrimary,
-                            modifier = Modifier.size(22.dp),
-                        )
-                    }
-                }
-            }
-        }
-
-        Spacer(modifier = Modifier.height(28.dp))
-
+                .size(292.dp)
+                .clip(CircleShape),
+        )
+        Spacer(modifier = Modifier.height(40.dp))
         Text(
             text = page.title,
             color = LabVisionColors.TextPrimary,
-            fontSize = 24.sp,
-            fontWeight = FontWeight.Bold,
-            textAlign = TextAlign.Center,
-            lineHeight = 30.sp,
-            modifier = Modifier.padding(horizontal = 8.dp),
+            fontSize = 18.sp,
+            fontWeight = FontWeight.SemiBold,
+            textAlign = TextAlign.Start,
+            lineHeight = 24.sp,
+            modifier = Modifier.fillMaxWidth(),
         )
-
-        Spacer(modifier = Modifier.height(12.dp))
-
+        Spacer(modifier = Modifier.height(8.dp))
         Text(
             text = page.body,
             color = LabVisionColors.TextSecondary,
-            fontSize = 15.sp,
-            lineHeight = 22.sp,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.padding(horizontal = 12.dp),
+            fontSize = 14.sp,
+            lineHeight = 20.sp,
+            textAlign = TextAlign.Start,
+            modifier = Modifier.fillMaxWidth(),
         )
+        Spacer(modifier = Modifier.weight(0.65f))
     }
 }

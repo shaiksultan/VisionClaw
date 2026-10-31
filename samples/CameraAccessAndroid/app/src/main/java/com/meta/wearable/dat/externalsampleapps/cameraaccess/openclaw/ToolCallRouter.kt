@@ -20,6 +20,7 @@ class ToolCallRouter(
     private val createDigitalTwin: suspend (Map<String, Any?>) -> ToolResult,
     private val requestExpertEngineer: suspend (Map<String, Any?>) -> ToolResult,
     private val playMusic: suspend () -> ToolResult,
+    private val playBbcRadio: suspend () -> ToolResult,
     private val playFootballAudio: suspend () -> ToolResult,
     private val stopAudioStream: suspend () -> ToolResult,
     private val startMeeting: suspend (Map<String, Any?>) -> ToolResult,
@@ -37,6 +38,7 @@ class ToolCallRouter(
             "start_lab_test",
             "request_expert_engineer",
             "play_music",
+            "play_bbc_radio",
             "play_football_audio",
             "start_meeting_recording",
             "stop_meeting_recording",
@@ -123,11 +125,15 @@ class ToolCallRouter(
                     requestExpertEngineer(call.args)
                 }
                 "play_music" -> {
-                    bridge.setToolCallStatus(ToolCallStatus.Executing("Hold on — connecting free music radio…"))
+                    bridge.setToolCallStatus(ToolCallStatus.Executing("Hold on — playing the UAE anthem, then live music…"))
                     playMusic()
                 }
+                "play_bbc_radio" -> {
+                    bridge.setToolCallStatus(ToolCallStatus.Executing("Hold on — connecting live BBC radio…"))
+                    playBbcRadio()
+                }
                 "play_football_audio" -> {
-                    bridge.setToolCallStatus(ToolCallStatus.Executing("Hold on — connecting live football audio…"))
+                    bridge.setToolCallStatus(ToolCallStatus.Executing("Hold on — connecting free English songs radio…"))
                     playFootballAudio()
                 }
                 "stop_audio_stream" -> {
@@ -217,9 +223,11 @@ class ToolCallRouter(
             "add_inventory_item" ->
                 "Hold on — adding that item to inventory."
             "play_music" ->
-                "Hold on — connecting free music radio."
+                "Hold on — playing the UAE national anthem, then live music."
+            "play_bbc_radio" ->
+                "Hold on — connecting live BBC radio."
             "play_football_audio" ->
-                "Hold on — connecting live football audio."
+                "Hold on — connecting free English songs radio."
             "execute" ->
                 "Hold on — working on that request."
             else ->

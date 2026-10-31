@@ -48,26 +48,36 @@ function mentionsTickets(lower) {
   return words.some((w) => looksLikeWord(w, "ticket", 2) || looksLikeWord(w, "tickets", 2));
 }
 
+function wantsFullLabReport(text) {
+  const lower = String(text || "").toLowerCase();
+  return /\b(full report|complete report|overall report|lab report)\b/.test(lower)
+    || /\ball(?:\s+the)?\s+agents?\b/.test(lower)
+    || /\bevery(?:\s+the)?\s+agents?\b/.test(lower)
+    || /\b(mission\s*control|lab\s*overview|overall|everything|whole lab)\b/.test(lower);
+}
+
 function wantsAnalytics(text) {
   const lower = String(text || "").toLowerCase().trim();
   if (!lower) return false;
 
   // Hard exclude normal Q&A / navigation / tickets pptx wording without chart intent.
-  if (/^(open|show|go to|list|where is|find|lookup)\b/.test(lower) && !/\b(chart|graph|analy)/.test(lower)) {
+  if (/^(open|show|go to|list|where is|find|lookup)\b/.test(lower) && !/\b(chart|graph|analy|report)\b/.test(lower)) {
     return false;
   }
 
   const visualIntent = /\b(chart|charts|graph|graphs|bar\s*chart|pie\s*chart|doughnut|line\s*chart|plot|plots|visuali[sz]e|visualization|dashboard)\b/.test(lower);
   const analysisIntent = /\b(analy[sz]e|analysis|analytics)\b/.test(lower)
-    && (/\b(ticket|tickets|support|inventory|expert engineer|mission\s*control|evidence|call|calls|stock|lab)\b/.test(lower)
-      || mentionsInventory(lower) || mentionsTickets(lower));
-  const exportAnalytics = /\b(export|download|prepare|generate|create|make)\b/.test(lower)
-    && /\b(analysis|analytics|chart|charts|graph|graphs)\b/.test(lower)
+    && (/\b(ticket|tickets|support|inventory|expert engineer|mission\s*control|evidence|call|calls|stock|lab|agents?)\b/.test(lower)
+      || mentionsInventory(lower) || mentionsTickets(lower) || wantsFullLabReport(lower));
+  const reportIntent = /\b(full report|complete report|share\s+(me\s+)?(a\s+)?(full\s+)?report)\b/.test(lower)
+    && (mentionsTickets(lower) || mentionsInventory(lower) || wantsFullLabReport(lower) || /\b(support|agents?|lab)\b/.test(lower));
+  const exportAnalytics = /\b(export|download|prepare|generate|create|make|share)\b/.test(lower)
+    && /\b(analysis|analytics|chart|charts|graph|graphs|report)\b/.test(lower)
     && /\b(pptx|powerpoint|excel|xlsx|csv|spreadsheet|report|slides?)\b/.test(lower);
   const showBreakdown = /\b(show|give|draw|build|make|create)\b/.test(lower)
     && /\b(chart|charts|graph|graphs|breakdown)\b/.test(lower);
 
-  return visualIntent || analysisIntent || exportAnalytics || showBreakdown;
+  return visualIntent || analysisIntent || reportIntent || exportAnalytics || showBreakdown;
 }
 
 function inferTopics(text) {
@@ -77,13 +87,13 @@ function inferTopics(text) {
   if (/\b(support|expert engineer|live call|sup-|remote support|call phase|calls)\b/.test(lower)) topics.add("support");
   if (mentionsInventory(lower)) topics.add("inventory");
   if (/\b(twin|twins|digital capture|ab-twin|walk-?through)\b/.test(lower)) topics.add("twins");
-  if (/\b(mission\s*control|lab\s*overview|overall|everything|all agents|whole lab)\b/.test(lower)) {
+  if (wantsFullLabReport(lower)) {
     topics.add("tickets");
     topics.add("support");
     topics.add("inventory");
   }
   // Explicit chart/analysis with no domain → default tickets only when nothing else matched.
-  if (!topics.size && /\b(analy[sz]e|analysis|analytics|chart|charts|graph|graphs|dashboard)\b/.test(lower)) {
+  if (!topics.size && /\b(analy[sz]e|analysis|analytics|chart|charts|graph|graphs|dashboard|report)\b/.test(lower)) {
     if (/\b(mission\s*control|overview|summary|kpi|ops)\b/.test(lower)) {
       topics.add("tickets");
       topics.add("support");
@@ -93,6 +103,10 @@ function inferTopics(text) {
     }
   }
   return [...topics];
+}
+
+function wantsTodayScope(text) {
+  return /\b(today|todays|to-?day)\b/i.test(String(text || ""));
 }
 
 function preferChartType(text, fallback = "bar") {
@@ -173,15 +187,20 @@ function rowsOrEmpty(db, sql) {
 function collectScopedAnalytics(db, message) {
   const topics = inferTopics(message);
   const preferred = preferChartType(message);
+  const todayOnly = wantsTodayScope(message);
+  const fullReport = wantsFullLabReport(message);
   const charts = [];
   const tables = {};
+  const ticketDayFilter = todayOnly ? " AND date(created_at)=date('now','localtime')" : "";
+  const supportDayFilter = todayOnly ? " AND date(started_at)=date('now','localtime')" : "";
 
   const summary = {
     topics,
-    tickets_total: safeCount(db, "SELECT COUNT(*) AS c FROM tickets"),
-    tickets_open: safeCount(db, "SELECT COUNT(*) AS c FROM tickets WHERE lower(status)='open'"),
-    tickets_closed: safeCount(db, "SELECT COUNT(*) AS c FROM tickets WHERE lower(status)='closed'"),
-    support_total: safeCount(db, "SELECT COUNT(*) AS c FROM support_calls"),
+    today_only: todayOnly,
+    tickets_total: safeCount(db, `SELECT COUNT(*) AS c FROM tickets WHERE 1=1${ticketDayFilter}`),
+    tickets_open: safeCount(db, `SELECT COUNT(*) AS c FROM tickets WHERE lower(status)='open'${ticketDayFilter}`),
+    tickets_closed: safeCount(db, `SELECT COUNT(*) AS c FROM tickets WHERE lower(status)='closed'${ticketDayFilter}`),
+    support_total: safeCount(db, `SELECT COUNT(*) AS c FROM support_calls WHERE 1=1${supportDayFilter}`),
     support_active: safeCount(db, `
       SELECT COUNT(*) AS c FROM support_calls
       WHERE status='active' AND call_phase IN ('ringing','waiting','connected','accepted','live')
@@ -192,11 +211,15 @@ function collectScopedAnalytics(db, message) {
   if (topics.includes("tickets")) {
     const byStatus = rowsOrEmpty(db, `
       SELECT lower(status) AS label, COUNT(*) AS value
-      FROM tickets GROUP BY lower(status) ORDER BY value DESC
+      FROM tickets
+      WHERE 1=1${ticketDayFilter}
+      GROUP BY lower(status) ORDER BY value DESC
     `);
     const byType = rowsOrEmpty(db, `
       SELECT COALESCE(NULLIF(ticket_type,''), 'evidence') AS label, COUNT(*) AS value
-      FROM tickets GROUP BY label ORDER BY value DESC
+      FROM tickets
+      WHERE 1=1${ticketDayFilter}
+      GROUP BY label ORDER BY value DESC
     `);
     const byDay = lastNDayCounts(db, 14);
 
@@ -205,29 +228,31 @@ function collectScopedAnalytics(db, message) {
     tables.tickets_by_day = byDay;
 
     const wantTrend = /\b(trend|over time|daily|timeline|line|last\s*\d+\s*days|14\s*days|creation date|created per day)\b/i.test(message);
-    const wantType = /\b(type|remote support|evidence)\b/i.test(message) && !wantTrend;
-    const wantStatus = (/\b(status|open|closed)\b/i.test(message) && !wantTrend) || (!wantTrend && !wantType);
+    const wantType = (/\b(type|remote support|evidence)\b/i.test(message) || fullReport) && !wantTrend;
+    const wantStatus = fullReport
+      || (/\b(status|open|closed|how many|count)\b/i.test(message) && !wantTrend)
+      || (!wantTrend && !wantType);
 
     if (wantStatus && byStatus.length) {
       charts.push({
         id: "tickets-status",
         type: preferred === "line" ? "bar" : preferred,
-        title: "Tickets by status",
-        description: "Scoped to your tickets question",
+        title: todayOnly ? "Tickets by status (today)" : "Tickets by status",
+        description: todayOnly ? "Created today" : "Scoped to your tickets question",
         data: byStatus,
       });
     }
     if (wantType && byType.length) {
       charts.push({
         id: "tickets-type",
-        type: preferred === "bar" && wantType ? "doughnut" : preferred,
-        title: "Tickets by type",
+        type: preferred === "bar" || fullReport ? "doughnut" : preferred,
+        title: todayOnly ? "Tickets by type (today)" : "Tickets by type",
         description: "Evidence vs remote support",
         data: byType,
       });
     }
-    if (wantTrend && byDay.length) {
-      const trendType = preferred === "line" ? "line" : (preferred || "bar");
+    if ((wantTrend || (todayOnly && !fullReport)) && byDay.length) {
+      const trendType = preferred === "line" || todayOnly ? "line" : (preferred || "bar");
       charts.push({
         id: "tickets-trend",
         type: trendType,
@@ -237,11 +262,11 @@ function collectScopedAnalytics(db, message) {
       });
     }
     // If topic is tickets but no subtype keywords, show the most relevant single chart.
-    if (!charts.length && byStatus.length) {
+    if (!charts.some(c => c.id.startsWith("tickets-")) && byStatus.length) {
       charts.push({
         id: "tickets-status",
         type: preferred === "line" ? "bar" : preferred,
-        title: "Tickets by status",
+        title: todayOnly ? "Tickets by status (today)" : "Tickets by status",
         description: "Based on your query",
         data: byStatus,
       });
@@ -251,14 +276,16 @@ function collectScopedAnalytics(db, message) {
   if (topics.includes("support")) {
     const byPhase = rowsOrEmpty(db, `
       SELECT COALESCE(NULLIF(call_phase,''), status, 'unknown') AS label, COUNT(*) AS value
-      FROM support_calls GROUP BY label ORDER BY value DESC
+      FROM support_calls
+      WHERE 1=1${supportDayFilter}
+      GROUP BY label ORDER BY value DESC
     `);
     tables.support_by_phase = byPhase;
     if (byPhase.length) {
       charts.push({
         id: "support-phase",
         type: preferred === "line" ? "bar" : preferred,
-        title: "Expert Engineer calls by phase",
+        title: todayOnly ? "Expert Engineer calls by phase (today)" : "Expert Engineer calls by phase",
         description: "Scoped to your support question",
         data: byPhase,
       });
@@ -281,7 +308,7 @@ function collectScopedAnalytics(db, message) {
     }
     tables.inventory_by_status = byStatus;
     tables.inventory_by_category = byCategory;
-    const wantCategory = /\b(categor(y|ies)|type|types)\b/i.test(message);
+    const wantCategory = /\b(categor(y|ies)|type|types)\b/i.test(message) || fullReport;
     if (wantCategory && byCategory.length) {
       charts.push({
         id: "inventory-category",
@@ -290,10 +317,11 @@ function collectScopedAnalytics(db, message) {
         description: "Scoped to your inventory question",
         data: byCategory,
       });
-    } else if (byStatus.length) {
+    }
+    if ((!wantCategory || fullReport) && byStatus.length) {
       charts.push({
         id: "inventory-status",
-        type: preferred === "line" ? "bar" : preferred,
+        type: preferred === "line" ? "bar" : (fullReport ? "doughnut" : preferred),
         title: "Inventory by status",
         description: "Scoped to your inventory question",
         data: byStatus,
@@ -379,17 +407,24 @@ async function writeAnalyticsPptx(analytics, reportsDir) {
 function buildReply(analytics, message, { pptxUrl, excelUrl }) {
   const topics = analytics.summary.topics || [];
   const chartTitles = analytics.charts.map(c => c.title);
+  const todayNote = analytics.summary.today_only ? " (today)" : "";
   const lines = [
-    `Analysis for your question — showing ${analytics.charts.length} chart${analytics.charts.length === 1 ? "" : "s"} on: ${topics.join(", ") || "your query"}.`,
+    `Analysis for your question — showing ${analytics.charts.length} chart${analytics.charts.length === 1 ? "" : "s"} on: ${topics.join(", ") || "your query"}${todayNote}.`,
     "",
   ];
+  if (topics.includes("tickets")) {
+    lines.push(`• Tickets${todayNote}: ${analytics.summary.tickets_total} total · ${analytics.summary.tickets_open} open · ${analytics.summary.tickets_closed} closed`);
+  }
+  if (topics.includes("support")) {
+    lines.push(`• Expert Engineer calls${todayNote}: ${analytics.summary.support_total} total · ${analytics.summary.support_active} active now`);
+  }
   if (topics.includes("inventory")) {
     lines.push(`• Inventory items total: ${analytics.summary.inventory_items}`);
   }
-  if (topics.includes("tickets")) {
-    lines.push(`• Tickets total: ${analytics.summary.tickets_total} (${analytics.summary.tickets_open} open)`);
+  if (chartTitles.length) {
+    lines.push("", "Charts included:");
+    lines.push(...chartTitles.map(t => `• ${t}`));
   }
-  lines.push(...chartTitles.map(t => `• ${t}`));
   if (pptxUrl) lines.push("", `PPTX: ${pptxUrl}`);
   if (excelUrl) lines.push(`Excel (CSV): ${excelUrl}`);
   return lines.join("\n");
@@ -403,7 +438,9 @@ async function handleAnalyticsChat(db, message, history = [], reportsDir) {
   const wantsPptx = /\b(pptx|powerpoint|slides?|presentation|deck)\b/.test(lower);
   const wantsExcel = /\b(excel|xlsx|csv|spreadsheet)\b/.test(lower);
   const wantsFiles = wantsPptx || wantsExcel
-    || (/\b(export|download|prepare)\b/.test(lower) && /\b(analysis|analytics|chart|charts|report)\b/.test(lower));
+    || wantsFullLabReport(effectiveMessage)
+    || (/\b(export|download|prepare|share|full report|complete report)\b/.test(lower)
+      && /\b(analysis|analytics|chart|charts|report)\b/.test(lower));
 
   const analytics = collectScopedAnalytics(db, effectiveMessage);
   if (!analytics.charts.length) {

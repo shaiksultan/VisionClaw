@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.HeadsetMic
 import androidx.compose.material.icons.filled.Inventory2
 import androidx.compose.material.icons.filled.MenuBook
 import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.filled.Radio
 import androidx.compose.material.icons.filled.Science
 import androidx.compose.material.icons.filled.SportsSoccer
 import androidx.compose.material.icons.filled.ViewInAr
@@ -53,8 +54,9 @@ val LabAgentCatalog: List<LabAgentUi> = listOf(
     LabAgentUi("support", "Lab Expert Engineer", "Live remote support call", "05", Icons.Filled.HeadsetMic, Color(0xFF34D399)),
     LabAgentUi("ab-twin", "Digital Capture Agent", "Walk-through digital capture", "06", Icons.Filled.ViewInAr, Color(0xFF818CF8)),
     LabAgentUi("visual", "Visual Troubleshoot", "Analyze screens & alarms", "07", Icons.Filled.Visibility, Color(0xFFFBBF24)),
-    LabAgentUi("music", "Music Agent", "Free music radio · audio only", "08", Icons.Filled.MusicNote, Color(0xFFF472B6)),
-    LabAgentUi("football", "Football Agent", "Live football radio · audio only", "09", Icons.Filled.SportsSoccer, Color(0xFF4ADE80)),
+    LabAgentUi("music", "Live Music", "UAE anthem, then live music", "08", Icons.Filled.MusicNote, Color(0xFFF472B6)),
+    LabAgentUi("bbc", "BBC Radio", "Live BBC World Service · audio only", "09", Icons.Filled.Radio, Color(0xFF38BDF8)),
+    LabAgentUi("football", "Live Football", "Free English songs radio", "10", Icons.Filled.SportsSoccer, Color(0xFF4ADE80)),
 )
 
 @Composable

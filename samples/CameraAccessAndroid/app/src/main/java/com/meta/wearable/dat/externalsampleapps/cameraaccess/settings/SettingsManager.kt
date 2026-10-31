@@ -21,6 +21,10 @@ object SettingsManager {
         get() = prefs.getString("peopleDirectoryURL", null) ?: Secrets.peopleDirectoryURL
         set(value) = prefs.edit().putString("peopleDirectoryURL", value.trimEnd('/')).apply()
 
+    var assistantLanguage: AssistantLanguage
+        get() = AssistantLanguage.fromStored(prefs.getString("assistantLanguage", null))
+        set(value) = prefs.edit().putString("assistantLanguage", value.name).apply()
+
     var geminiSystemPrompt: String
         get() {
             val stored = prefs.getString("geminiSystemPrompt", null)
@@ -47,6 +51,9 @@ object SettingsManager {
         if (!stored.contains("I am LAB AI Assistant. How can I help?", ignoreCase = false)) return true
         // Ensure music / football audio tools are in the prompt
         if (!stored.contains("play_music", ignoreCase = false)) return true
+        if (!stored.contains("play_bbc_radio", ignoreCase = false)) return true
+        if (!stored.contains("UAE national anthem", ignoreCase = false)) return true
+        if (stored.contains("talkSPORT", ignoreCase = true) || stored.contains("football commentary", ignoreCase = true)) return true
         return false
     }
 
@@ -86,6 +93,13 @@ object SettingsManager {
         get() = prefs.getBoolean("onboardingCompleted", false)
         set(value) = prefs.edit().putBoolean("onboardingCompleted", value).apply()
 
+    /** Bump when onboarding art changes so existing installs see the new scenes once. */
+    const val ONBOARDING_ART_VERSION = 2
+
+    var onboardingArtVersion: Int
+        get() = prefs.getInt("onboardingArtVersion", 0)
+        set(value) = prefs.edit().putInt("onboardingArtVersion", value).apply()
+
     fun resetAll() {
         prefs.edit().clear().apply()
     }
@@ -98,10 +112,11 @@ When asked who you are, how you can help, or what you can do (including speech s
 
 First speak (session start): When the session begins or you are asked to introduce yourself, say only: "I am LAB AI Assistant. How can I help?" Do not call tools during that intro. Do not recite an agent roster.
 
-Mobile-only audio agents (free public radio, audio only — no video):
-- play_music: when the user says play music / Music Agent — connect to free music radio (SomaFM / Radio Paradise).
-- play_football_audio: when the user says live football / football match / Football Agent — connect to free sports radio with football commentary (talkSPORT / BBC 5 Live). Audio only.
-- stop_audio_stream: when the user says stop music, stop football, or stop the stream.
+Mobile-only audio agents (free public audio only — no video):
+- play_music: when the user says play music / Music Agent / national anthem — play the UAE national anthem first, then continue with free live music radio (SomaFM / Radio Paradise).
+- play_bbc_radio: when the user says BBC, BBC radio, or World Service — connect to free live BBC World Service radio. This is the second live radio, separate from music.
+- play_football_audio: when the user says live football / Football Agent / English songs — connect to free English songs radio (SomaFM Indie Pop, Lush, Radio Paradise). Audio only. No sports commentary.
+- stop_audio_stream: when the user says stop music, stop BBC, stop football, or stop the stream.
 
 When the user asks who a visible person is, or asks for details about "this person", ALWAYS call identify_person. Never guess identity from appearance. Speak its result naturally. When it reports NO_MATCH, say exactly: "I don't have details about this person."
 
@@ -158,8 +173,9 @@ IMPORTANT: Before calling a tool, ALWAYS speak a brief acknowledgment first. For
 - "I'll create that evidence ticket." Ask what the evidence shows, ask screenshot or video, then call create_evidence_ticket.
 - "Hold on — I'll capture a short walk-through, about eight seconds, then create the digital capture. Speak anytime to interrupt." then call create_digital_twin.
 - "Starting Lab Expert Engineer call now." then call request_expert_engineer.
-- "Connecting free music radio." then call play_music.
-- "Connecting live football audio." then call play_football_audio.
+- "Playing the UAE national anthem, then live music." then call play_music.
+- "Connecting live BBC radio." then call play_bbc_radio.
+- "Connecting free English songs radio." then call play_football_audio.
 - "Stopping the audio stream." then call stop_audio_stream.
 - "Sure, let me add that to your shopping list." then call execute.
 Never call tools silently -- the user needs verbal confirmation that you heard them and are working on it.

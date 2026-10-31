@@ -33,6 +33,18 @@ class SupportCallClient(
         patchJson("${baseUrl()}/api/support/sessions/$supportCallId", payload, "update_support_room")
     }
 
+    /** Poll while waiting / live so glasses clear if Mission Control ends the call. */
+    suspend fun getSession(supportCallId: Int): JSONObject = withContext(Dispatchers.IO) {
+        labDemoClient.ensureConnected()
+        val request = Request.Builder()
+            .url("${baseUrl()}/api/support/sessions/$supportCallId")
+            .header("ngrok-skip-browser-warning", "true")
+            .apply { labDemoClient.applyLabHeaders(this, "get_support_session") }
+            .get()
+            .build()
+        execute(request)
+    }
+
     suspend fun endSupportCall(
         supportCallId: Int,
         videoFrames: List<String>,

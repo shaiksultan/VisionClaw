@@ -53,6 +53,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -77,12 +80,27 @@ fun CameraAccessScaffold(
   val snackbarHostState = remember { SnackbarHostState() }
   val bottomSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
   var showSplash by remember { mutableStateOf(true) }
-  var showOnboarding by remember {
-    mutableStateOf(!SettingsManager.onboardingCompleted)
-  }
+  var showOnboarding by remember { mutableStateOf(true) }
   val presenceClient = remember { LabDemoClient() }
+  val lifecycleOwner = LocalLifecycleOwner.current
 
-  LaunchedEffect(Unit) {
+  // Show splash, then the agent carousel, every time the app is opened.
+  DisposableEffect(lifecycleOwner, uiState.isStreaming) {
+    var leftApp = false
+    val observer = LifecycleEventObserver { _, event ->
+      if (event == Lifecycle.Event.ON_STOP) leftApp = true
+      if (event == Lifecycle.Event.ON_START && leftApp && !uiState.isStreaming) {
+        leftApp = false
+        showSplash = true
+        showOnboarding = true
+      }
+    }
+    lifecycleOwner.lifecycle.addObserver(observer)
+    onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+  }
+
+  LaunchedEffect(showSplash) {
+    if (!showSplash) return@LaunchedEffect
     delay(2200)
     showSplash = false
   }
@@ -109,14 +127,9 @@ fun CameraAccessScaffold(
     }
     presenceClient.setStreamingMode(mode)
     presenceClient.setPresenceContext(page, "Telecom Lab")
-    try {
-      while (true) {
-        runCatching { presenceClient.ensureConnected() }
-        kotlinx.coroutines.delay(25_000)
-      }
-    } finally {
-      // Mode/page flips cancel this effect and restart it immediately.
-    }
+    // One check-in when the screen changes. A repeating heartbeat was hitting
+    // Mission Control during AI voice and dropping the live session.
+    runCatching { presenceClient.ensureConnected() }
   }
 
   DisposableEffect(Unit) {
@@ -164,10 +177,7 @@ fun CameraAccessScaffold(
           SplashScreen(modifier = Modifier.fillMaxSize())
         } else if (showOnboarding) {
           OnboardingScreen(
-              onFinished = {
-                SettingsManager.onboardingCompleted = true
-                showOnboarding = false
-              },
+              onFinished = { showOnboarding = false },
               modifier = Modifier.fillMaxSize(),
           )
         }
