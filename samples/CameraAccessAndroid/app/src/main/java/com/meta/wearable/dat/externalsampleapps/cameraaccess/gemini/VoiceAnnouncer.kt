@@ -1,6 +1,7 @@
 package com.meta.wearable.dat.externalsampleapps.cameraaccess.gemini
 
 import android.content.Context
+import android.media.AudioAttributes
 import android.speech.tts.TextToSpeech
 import android.util.Log
 import java.util.concurrent.atomic.AtomicBoolean
@@ -19,6 +20,13 @@ class VoiceAnnouncer(context: Context) {
         if (status == TextToSpeech.SUCCESS) {
             tts?.language = com.meta.wearable.dat.externalsampleapps.cameraaccess.settings.SettingsManager.assistantLanguage.locale
             tts?.setSpeechRate(1.05f)
+            // Media usage → phone loudspeaker (not quiet earpiece) when BT is off.
+            tts?.setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                    .build()
+            )
             ready.set(true)
             Log.i(TAG, "TTS ready")
         } else {

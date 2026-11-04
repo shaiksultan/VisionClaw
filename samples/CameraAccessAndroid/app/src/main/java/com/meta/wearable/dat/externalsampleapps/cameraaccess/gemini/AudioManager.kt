@@ -24,7 +24,7 @@ class AudioManager(context: Context) {
     private var captureThread: Thread? = null
     private val systemAudioManager =
         context.applicationContext.getSystemService(Context.AUDIO_SERVICE) as android.media.AudioManager
-    private var communicationDevice: AudioDeviceInfo? = null
+    private var playbackDevice: AudioDeviceInfo? = null
     @Volatile
     private var isCapturing = false
     private val accumulatedData = ByteArrayOutputStream()
@@ -34,7 +34,7 @@ class AudioManager(context: Context) {
     fun startCapture() {
         if (isCapturing) return
 
-        selectGlassesForPlayback()
+        selectPlaybackOutput()
 
         val bufferSize = AudioRecord.getMinBufferSize(
             GeminiConfig.INPUT_AUDIO_SAMPLE_RATE,
@@ -59,10 +59,12 @@ class AudioManager(context: Context) {
             audioRecord?.setPreferredDevice(device)
         }
 
+        // USAGE_MEDIA + builtin speaker: VOICE_COMMUNICATION routes to the quiet
+        // earpiece on Samsung when Bluetooth is off, so AI replies seemed silent.
         audioTrack = AudioTrack.Builder()
             .setAudioAttributes(
                 AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+                    .setUsage(AudioAttributes.USAGE_MEDIA)
                     .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
                     .build()
             )
@@ -83,7 +85,7 @@ class AudioManager(context: Context) {
             )
             .build()
 
-        communicationDevice?.let { device ->
+        playbackDevice?.let { device ->
             audioTrack?.setPreferredDevice(device)
         }
 
@@ -127,18 +129,16 @@ class AudioManager(context: Context) {
         }, "audio-capture").also { it.start() }
 
         val input = builtInMic?.productName?.toString() ?: "phone"
-        val output = communicationDevice?.productName?.toString() ?: "phone"
+        val output = playbackDevice?.productName?.toString() ?: "default"
         Log.i(TAG, "Audio capture started (16kHz mono PCM16), input=$input, output=$output")
     }
 
     @SuppressLint("MissingPermission")
-    private fun selectGlassesForPlayback() {
-        // MODE_IN_COMMUNICATION makes Samsung activate the Ray-Ban SCO voice
-        // route. Meta's wearable service owns that route while its camera is
-        // streaming, and Android consequently marks our AudioRecord as
-        // "silenced". Stay in normal media mode and route output only; this
-        // leaves the built-in phone microphone available for transcription.
+    private fun selectPlaybackOutput() {
+        // Stay in MODE_NORMAL. MODE_IN_COMMUNICATION activates Ray-Ban SCO and
+        // can silence phone-mic capture while glasses camera is streaming.
         systemAudioManager.mode = android.media.AudioManager.MODE_NORMAL
+        runCatching { systemAudioManager.isSpeakerphoneOn = false }
 
         val devices = systemAudioManager.getDevices(android.media.AudioManager.GET_DEVICES_OUTPUTS)
         val bluetoothDevice = devices.firstOrNull {
@@ -146,17 +146,21 @@ class AudioManager(context: Context) {
         } ?: devices.firstOrNull {
             it.type == AudioDeviceInfo.TYPE_BLE_HEADSET
         }
-
-        communicationDevice = bluetoothDevice
-        if (bluetoothDevice == null) {
-            Log.w(TAG, "No Bluetooth communication device available; using phone audio")
-            return
+        val builtinSpeaker = devices.firstOrNull {
+            it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER
         }
 
-        // Do not call setCommunicationDevice here: it also redirects microphone
-        // input to SCO, which Meta owns during glasses camera streaming. The
-        // AudioTrack preferred device below affects playback only.
-        Log.i(TAG, "Selected ${bluetoothDevice.productName} media output for AI playback")
+        // Prefer glasses BT media when available; otherwise force loudspeaker
+        // (not the earpiece) so AI replies are audible on the phone.
+        playbackDevice = bluetoothDevice ?: builtinSpeaker
+        when {
+            bluetoothDevice != null ->
+                Log.i(TAG, "Selected ${bluetoothDevice.productName} media output for AI playback")
+            builtinSpeaker != null ->
+                Log.i(TAG, "Selected builtin speaker for AI playback (Bluetooth off)")
+            else ->
+                Log.w(TAG, "No preferred output device; using system default media route")
+        }
     }
 
     fun playAudio(data: ByteArray) {
@@ -195,7 +199,7 @@ class AudioManager(context: Context) {
         audioTrack = null
 
         systemAudioManager.mode = android.media.AudioManager.MODE_NORMAL
-        communicationDevice = null
+        playbackDevice = null
 
         Log.d(TAG, "Audio capture stopped")
     }
