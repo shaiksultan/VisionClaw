@@ -11,7 +11,7 @@ Connecting our engineers, equipment and knowledge through **AI glasses**, a **mo
 | | |
 |---|---|
 | **Project** | UAE Lab Vision AI (Mission Control + voice agents) |
-| **Organization** | etisalat · UAELAB (Technology Department, Abu Dhabi) |
+| **Organization** | UAELAB |
 | **Main development** | [Sultan Sharief Shaik](https://github.com/shaiksultan) (`@shaiksultan`) |
 | **Repository** | https://github.com/shaiksultan/VisionClaw |
 | **Branch** | [`uae-lab-vision-ai`](https://github.com/shaiksultan/VisionClaw/tree/uae-lab-vision-ai) |
@@ -175,25 +175,20 @@ Open `http://localhost:8090` (or `http://YOUR_PC_IP:8090` from phones).
 
 ### Design concept
 
-Concept and design contributors (etisalat UAE):
+Concept and design contributors:
 
 | | |
 |---|---|
-| **Ayman Elnashar**¹ ² | Design concept |
-| **Mohamed S. AlZaabi**¹ | Design concept |
-| **Mohammad Sameer**¹ | Design concept |
-| **Yunus Shaikh**¹ | Design concept |
+| **Ayman Elnashar** | Design concept |
+| **Mohamed S. AlZaabi** | Design concept |
+| **Mohammad Sameer** | Design concept |
+| **Yunus Shaikh** | Design concept |
 
 ### Main development
 
 | | |
 |---|---|
-| **Sultan Sharief Shaik**¹ ([@shaiksultan](https://github.com/shaiksultan)) | **Main development** — UAE Lab Vision AI app, Mission Control, agents, Expert Engineer, and demo platform |
-
-### Affiliations
-
-1. Technology Department, etisalat UAE, Abu Dhabi, UAE  
-2. College of Computing and Mathematical Sciences, Khalifa University, Abu Dhabi, UAE  
+| **Sultan Sharief Shaik** ([@shaiksultan](https://github.com/shaiksultan)) | **Main development** — UAE Lab Vision AI app, Mission Control, agents, Expert Engineer, and demo platform |
 
 ### Platform lineage
 
