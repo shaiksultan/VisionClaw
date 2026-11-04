@@ -1,8 +1,24 @@
 .DS_Store
 
-# Android
+# Android secrets / local SDK paths
 samples/CameraAccessAndroid/app/src/main/java/**/Secrets.kt
 samples/CameraAccessAndroid/local.properties
 samples/CameraAccessAndroid/.gradle/
 samples/CameraAccessAndroid/build/
 samples/CameraAccessAndroid/app/build/
+samples/LabExpert/local.properties
+**/Secrets.kt
+**/Secrets.swift
+**/.env
+
+# Large APK kept out of git (GitHub 100MB limit) — publish via Releases
+apks/UAE-Lab-Vision-AI.apk
+samples/**/backups/*.apk
+
+# Local extract / logs
+_pptx*/
+_pptx_extract.txt
+_gradle_build.log
+_patch_*.py
+people-directory/_*.log*
+people-directory/**/_*.log*
