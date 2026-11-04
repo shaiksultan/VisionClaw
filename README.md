@@ -11,8 +11,8 @@ Connecting engineers, equipment, and knowledge through **AI glasses**, a **mobil
 | | |
 |---|---|
 | **Project** | Lab Vision AI (Mission Control + voice agents) |
-| **Organization** | etisalat · UAELAB |
-| **Maintainer** | [Shaik Sultan](https://github.com/shaiksultan) (`@shaiksultan`) |
+| **Organization** | etisalat · UAELAB (Technology Department, Abu Dhabi) |
+| **Main development** | [Sultan Sharief Shaik](https://github.com/shaiksultan) (`@shaiksultan`) |
 | **Repository** | https://github.com/shaiksultan/VisionClaw |
 | **Demo branch** | [`cursor/expert-engineer-audio-mission-control`](https://github.com/shaiksultan/VisionClaw/tree/cursor/expert-engineer-audio-mission-control) |
 | **Install guide** | [DEMO_INSTALL_AND_USE.md](DEMO_INSTALL_AND_USE.md) |
@@ -162,7 +162,30 @@ Set Mission Control base URL on the device to `http://YOUR_PC_IP:8090`.
 
 ## Credits & lineage
 
-- **Lab Vision AI / Mission Control** — UAELAB demo platform maintained by **Shaik Sultan** ([@shaiksultan](https://github.com/shaiksultan)).  
+### Design concept
+
+Concept and design contributors (etisalat UAE):
+
+| | |
+|---|---|
+| **Ayman Elnashar**¹ ² | Design concept |
+| **Mohamed S. AlZaabi**¹ | Design concept |
+| **Mohammad Sameer**¹ | Design concept |
+| **Yunus Shaikh**¹ | Design concept |
+
+### Main development
+
+| | |
+|---|---|
+| **Sultan Sharief Shaik**¹ ([@shaiksultan](https://github.com/shaiksultan)) | **Main development** — Lab Vision AI app, Mission Control, agents, Expert Engineer, and demo platform |
+
+### Affiliations
+
+1. Technology Department, etisalat UAE, Abu Dhabi, UAE  
+2. College of Computing and Mathematical Sciences, Khalifa University, Abu Dhabi, UAE  
+
+### Platform lineage
+
 - Built on **VisionClaw** (Meta Ray-Ban + Gemini Live + OpenClaw). Upstream / org mirrors: [Intent-Lab/VisionClaw](https://github.com/Intent-Lab/VisionClaw).  
 - Hardware: Meta Ray-Ban smart glasses · Meta Wearables DAT SDK.  
 - Cloud AI: [Gemini Live API](https://ai.google.dev/gemini-api/docs/live).
