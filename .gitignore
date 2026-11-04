@@ -22,3 +22,9 @@ _gradle_build.log
 _patch_*.py
 people-directory/_*.log*
 people-directory/**/_*.log*
+
+# Local Word share packs (keep off GitHub)
+UAE_Lab_Vision_AI_README.docx
+UAE_Lab_Vision_AI_VP_Team_Share_Pack.docx
+UAE_Lab_Vision_AI_*_Share_Pack*.docx
+
