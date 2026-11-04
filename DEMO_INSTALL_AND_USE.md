@@ -10,7 +10,7 @@ Boss-ready package for the **UAELAB Mission Control** demo: AI glasses / phone a
 |------|-----|
 | **Working fork (latest demo branch)** | https://github.com/shaiksultan/VisionClaw |
 | **Demo branch (all recent Mission Control + Expert Engineer work)** | https://github.com/shaiksultan/VisionClaw/tree/cursor/expert-engineer-audio-mission-control |
-| **Browse this commit** | https://github.com/shaiksultan/VisionClaw/commit/26033b4 |
+| **README (about Lab Vision AI)** | https://github.com/shaiksultan/VisionClaw/blob/cursor/expert-engineer-audio-mission-control/README.md |
 | Upstream org mirror | https://github.com/Intent-Lab/VisionClaw |
 
 **Clone the demo branch:**
